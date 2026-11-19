@@ -1,0 +1,284 @@
+:root {
+	--app-bg: #f5f6f8;
+	--panel-bg: #ffffff;
+	--panel-border: #eceef2;
+	--panel-glass: rgba(255, 255, 255, 0.65);
+	--panel-border-glass: rgba(255, 255, 255, 0.75);
+	--text-primary: #1d2129;
+	--text-secondary: #6b7280;
+	--accent: #2563eb;
+	--accent-soft: #eef3ff;
+	--success: #16a34a;
+	--danger: #f56c6c;
+	--radius-sm: 8px;
+	--radius: 12px;
+	--shadow: none;
+
+	/* Element Plus 基础圆角对齐全局设计语言 */
+	--el-border-radius-base: 6px;
+	--el-border-radius-small: 6px;
+}
+
+html.dark {
+	--app-bg: #1e2023;
+	--panel-bg: #1a1d22;
+	--panel-border: #272b32;
+	--panel-glass: rgba(255, 255, 255, 0.015);
+	--panel-border-glass: rgba(255, 255, 255, 0.08);
+	--text-primary: #e6e8eb;
+	--text-secondary: #9aa0a8;
+	--accent: #4c8dff;
+	--accent-soft: #1d2a44;
+	--success: #4ade80;
+	--danger: #f56c6c;
+	--shadow: none;
+
+	/* 内部 Element 表面跟随卡片半透明，增强整体通透感 */
+	--el-bg-color: rgba(255, 255, 255, 0.04);
+	--el-fill-color-blank: transparent;
+	--el-table-bg-color: transparent;
+	--el-table-tr-bg-color: transparent;
+	--el-table-header-bg-color: rgba(255, 255, 255, 0.04);
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+	height: 100%;
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	background: var(--app-bg);
+	color: var(--text-primary);
+	font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, -apple-system,
+		sans-serif;
+	font-size: 14px;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+/* 输入框 / 文本域内仍允许选中文字 */
+.el-input__inner,
+.el-textarea__inner,
+.el-input__textarea {
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+::-webkit-scrollbar-thumb {
+	background: rgba(128, 134, 148, 0.4);
+	border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.panel {
+	background: var(--panel-glass);
+	border: 1px solid var(--panel-border-glass);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow);
+	backdrop-filter: blur(16px) saturate(1.25);
+	-webkit-backdrop-filter: blur(16px) saturate(1.25);
+}
+
+.muted {
+	color: var(--text-secondary);
+}
+
+.output-pre {
+	margin: 0;
+	padding: 10px;
+	height: 100%;
+	overflow-y: auto;
+	font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+	font-size: 13px;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+.field-label {
+	font-size: 12px;
+	color: var(--text-secondary);
+	margin-bottom: 6px;
+}
+
+/* 对话框 / 消息框使用实色背景，不跟随卡片半透明 */
+.el-dialog,
+.el-message-box {
+	background-color: var(--el-bg-color-overlay) !important;
+}
+
+/* 软件设置弹窗：内容字号略小，底部取消/保存按钮加大间距 */
+.settings-dialog .el-dialog__body {
+	font-size: 12px;
+}
+.settings-dialog .el-form-item {
+	margin-bottom: 12px;
+}
+.settings-dialog .el-dialog__footer {
+	padding-bottom: 24px;
+}
+.settings-dialog .el-form-item__label,
+.settings-dialog .el-radio__label,
+.settings-dialog .el-switch__label {
+	font-size: 12px;
+}
+.settings-dialog .el-dialog__footer .el-button + .el-button {
+	margin-left: 16px;
+}
+.settings-dialog .settings-footer-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.settings-dialog .settings-footer-actions {
+	display: flex;
+	align-items: center;
+}
+.settings-dialog .el-dialog__title {
+	font-size: 14px;
+}
+.settings-dialog .el-dialog__footer .el-button {
+	font-size: 12px;
+}
+.settings-dialog .settings-switch-row {
+	display: flex;
+	gap: 32px;
+}
+.settings-dialog .settings-switch-cell {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.settings-dialog .settings-switch-label {
+	font-size: 12px;
+	color: var(--text-secondary);
+}
+.settings-dialog .el-switch--small {
+	height: 14px;
+}
+.settings-dialog .el-switch--small .el-switch__core {
+	width: 26px;
+	height: 14px;
+	border-radius: 7px;
+}
+.settings-dialog .el-switch--small .el-switch__action {
+	width: 10px;
+	height: 10px;
+}
+.settings-dialog .settings-inline-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 12px;
+}
+.settings-dialog .settings-inline-label {
+	font-size: 12px;
+	color: var(--text-secondary);
+	flex: none;
+}
+.settings-dialog .el-radio {
+	margin-right: 36px;
+}
+.settings-dialog .shortcut-btn {
+	font-size: 12px;
+}
+.settings-dialog .el-select,
+.settings-dialog .el-select .el-input__inner,
+.settings-dialog .el-select__placeholder {
+	font-size: 11px;
+}
+.settings-select-popper {
+	min-width: auto;
+}
+.settings-select-popper .el-select-dropdown__item {
+	font-size: 11px;
+	padding-right: 14px;
+}
+
+/* 默认提示气泡：实色背景 + 对比文字 + 箭头，深浅色下均清晰可读 */
+.app-tip.el-popper,
+.app-tip.el-popper.is-dark {
+	background-color: var(--panel-bg) !important;
+	color: var(--text-primary) !important;
+	border: 1px solid var(--panel-border) !important;
+}
+.app-tip.el-popper .el-popper__arrow::before {
+	background-color: var(--panel-bg) !important;
+	border-color: var(--panel-border) !important;
+}
+
+/* 调试模式自绘右键菜单（仅「检查元素」），跟随深浅主题 */
+.dev-context-menu {
+	position: fixed;
+	z-index: 99999;
+	min-width: 116px;
+	padding: 4px;
+	background: var(--panel-bg);
+	border: 1px solid var(--panel-border);
+	border-radius: var(--radius-sm);
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.dev-menu-item {
+	padding: 7px 12px;
+	font-size: 12px;
+	color: var(--text-primary);
+	border-radius: 6px;
+	cursor: pointer;
+	user-select: none;
+	-webkit-user-select: none;
+}
+.dev-menu-item:hover {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+/* 网卡列表行右键菜单（设为默认网卡） */
+.row-context-menu {
+	position: fixed;
+	z-index: 99999;
+	min-width: 132px;
+	padding: 4px;
+	background: var(--panel-bg);
+	border: 1px solid var(--panel-border);
+	border-radius: var(--radius-sm);
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.row-menu-item {
+	padding: 7px 12px;
+	font-size: 12px;
+	color: var(--text-primary);
+	border-radius: 6px;
+	cursor: pointer;
+	user-select: none;
+	-webkit-user-select: none;
+}
+.row-menu-item:hover:not(.is-disabled) {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.row-menu-item.is-disabled {
+	color: var(--text-secondary);
+	cursor: default;
+}
+.row-menu-sep {
+	height: 1px;
+	margin: 3px 4px;
+	background: var(--panel-border);
+}

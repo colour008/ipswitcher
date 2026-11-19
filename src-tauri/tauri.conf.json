@@ -1,0 +1,67 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "IPSwitcher",
+  "version": "2.1.1",
+  "identifier": "com.jamhoo.ipswitcher",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "IPSwitcher - 网卡IP快速切换工具",
+        "width": 1180,
+        "height": 830,
+        "minWidth": 960,
+        "minHeight": 620,
+        "resizable": true,
+        "center": true,
+        "decorations": true
+      },
+      {
+        "label": "widget",
+        "title": "IPSwitcher 挂件",
+        "url": "widget.html",
+        "width": 240,
+        "height": 194,
+        "minWidth": 240,
+        "minHeight": 150,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": true,
+        "center": false,
+        "visible": false,
+        "noRedirectionBitmap": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": ["SimpChinese", "English"],
+        "installMode": "perMachine"
+      }
+    },
+    "publisher": "JamHoo",
+    "copyright": "Copyright (c) 2026 JamHoo",
+    "homepage": ""
+  }
+}

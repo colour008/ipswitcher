@@ -1,0 +1,28 @@
+# --- 前端依赖与构建产物 ---
+node_modules/
+dist/
+dist-portable/
+
+# --- Rust / Tauri 构建产物 ---
+src-tauri/target/
+src-tauri/gen/
+
+# --- 发布产物（历史版本 exe / zip / 本地配置） ---
+release/
+
+# --- 本地运行配置（含本机网卡方案，不入库） ---
+config.json
+
+# --- 日志 ---
+*.log
+
+# --- 本机环境脚本与开发调试记录 ---
+.env-setup/
+
+# --- 操作系统 / 编辑器杂项 ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
