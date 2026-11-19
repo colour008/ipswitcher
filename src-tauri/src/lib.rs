@@ -55,23 +55,6 @@ fn restore_widget_state(app: &AppHandle) {
     let _ = w.set_always_on_bottom(true);
 }
 
-/// Windows：去掉挂件窗口的最小化框，使其不可被最小化，降低 Win+D（显示桌面）时被一并隐藏的概率
-#[cfg(target_os = "windows")]
-fn disable_widget_minimize(w: &tauri::WebviewWindow) {
-    if let Ok(hwnd) = w.hwnd() {
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetWindowLongPtrW, SetWindowLongPtrW, GWL_STYLE, WS_MINIMIZEBOX,
-        };
-        unsafe {
-            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-            let _ = SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(WS_MINIMIZEBOX.0 as isize));
-        }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn disable_widget_minimize(_w: &tauri::WebviewWindow) {}
-
 /// 记录挂件背景不透明度（0.0 ~ 1.0）并持久化，仅前端卡片背景使用
 #[tauri::command]
 fn set_widget_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
@@ -132,7 +115,6 @@ fn show_widget(app: AppHandle) -> Result<(), String> {
         {
             let _ = w.set_shadow(false);
         }
-        disable_widget_minimize(&w);
         let _ = w.show();
         let _ = w.set_always_on_bottom(true);
         let _ = w.set_focus();
@@ -297,7 +279,6 @@ pub fn run() {
                 {
                     let _ = w.set_shadow(false);
                 }
-                disable_widget_minimize(&w);
             }
             if startup_cfg.widget_visible.unwrap_or(true) {
                 if let Some(w) = app.get_webview_window("widget") {
