@@ -147,9 +147,36 @@ fn set_widget_pinned(app: AppHandle, pinned: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// 主窗默认尺寸（与 tauri.conf.json 中 main 窗口一致）
+const MAIN_DEFAULT_SIZE: LogicalSize<f64> = LogicalSize::new(1180.0, 830.0);
+
 fn show_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// 双击托盘：处于隐藏 / 最小化等收起状态时，仅恢复显示并聚焦；
+/// 正常显示状态下临时前置，并把窗口复位为默认大小、回到屏幕居中
+fn tray_double_click_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let visible = w.is_visible().unwrap_or(false);
+        let minimized = w.is_minimized().unwrap_or(false);
+
+        if !visible || minimized {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+            return;
+        }
+
+        // 最大化状态先还原，否则尺寸重置不生效
+        if w.is_maximized().unwrap_or(false) {
+            let _ = w.unmaximize();
+        }
+        let _ = w.set_size(MAIN_DEFAULT_SIZE);
+        let _ = w.center();
         let _ = w.set_focus();
     }
 }
@@ -246,7 +273,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .on_tray_icon_event(|tray, event| {
             let app = tray.app_handle().clone();
             match event {
-                TrayIconEvent::DoubleClick { .. } => show_main_window(&app),
+                TrayIconEvent::DoubleClick { .. } => tray_double_click_main(&app),
                 TrayIconEvent::Click {
                     button: MouseButton::Left,
                     button_state: MouseButtonState::Up,

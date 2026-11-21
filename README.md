@@ -71,8 +71,8 @@ npm run app:build
 | `check_admin` | 判断当前是否具备管理员权限 |
 | `set_autostart` / `get_autostart` | 读写开机自启状态 |
 | `create_desktop_shortcut` | 创建桌面快捷方式 |
-| `check_update` | 检查 GitHub Release 是否存在新版本，并按当前分发形态匹配更新资产 |
-| `download_update` | 下载更新包到临时目录，流式回传下载进度，优先校验 SHA256、缺失时回退校验大小 |
+| `check_update` | 检查 GitHub Release 是否存在新版本，并按当前分发形态匹配更新资产；直连失败自动回退内置加速节点 |
+| `download_update` | 下载更新包到临时目录，流式回传下载进度；直连失败依次回退加速节点，优先校验 SHA256、缺失时回退校验大小 |
 | `apply_update` | 应用更新：安装版拉起安装器，绿色 / 便携版退出后覆盖主程序并重启 |
 
 > 挂件显隐、透明度、尺寸固定、主题切换等内部命令由前端挂件组件直接调用，未在上表列出。
@@ -84,13 +84,13 @@ npm run app:build
 
 ## 下载产物
 
-最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.2.2 产物如下：
+最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.2.3 产物如下：
 
 | 产物 | 文件 | 说明 |
 | --- | --- | --- |
-| NSIS 安装包 | [IPSwitcher_2.2.2_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.2/IPSwitcher_2.2.2_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
-| 绿色便携版 | [IPSwitcher_v2.2.2_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.2.2/IPSwitcher_v2.2.2_portable.zip) | 解压即用，配置保存在程序同级目录 |
-| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.2/IPSwitcher.exe) | 单文件可执行程序 |
+| NSIS 安装包 | [IPSwitcher_2.2.3_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.3/IPSwitcher_2.2.3_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
+| 绿色便携版 | [IPSwitcher_v2.2.3_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.2.3/IPSwitcher_v2.2.3_portable.zip) | 解压即用，配置保存在程序同级目录 |
+| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.3/IPSwitcher.exe) | 单文件可执行程序 |
 
 ## 路线图
 

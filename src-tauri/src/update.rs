@@ -14,6 +14,12 @@ const REPO_NAME: &str = "ipswitcher";
 const USER_AGENT: &str = "ipswitcher-updater";
 /// 更新包临时目录（系统临时目录下）
 const UPDATE_TMP_DIR: &str = "ipswitcher-update";
+/// GitHub 加速前缀：直连失败后按顺序回退。公益代理可用性会变化，集中在此便于后续调整。
+const PROXY_PREFIXES: &[&str] = &[
+    "https://gh-proxy.com",
+    "https://ghproxy.net",
+    "https://ghfast.top",
+];
 
 // ---------- 向前端返回的数据结构 ----------
 
@@ -101,8 +107,18 @@ fn pick_asset<'a>(flavor: InstallFlavor, assets: &'a [GithubAsset]) -> Option<&'
     }
 }
 
+/// 生成候选访问地址：先直连原始地址，再依次拼接加速前缀（前缀 + 完整原始 URL）
+fn fallback_urls(original: &str) -> Vec<String> {
+    let mut urls = Vec::with_capacity(1 + PROXY_PREFIXES.len());
+    urls.push(original.to_string());
+    for prefix in PROXY_PREFIXES {
+        urls.push(format!("{prefix}/{original}"));
+    }
+    urls
+}
+
 async fn fetch_release() -> Result<GithubRelease, String> {
-    let url = format!(
+    let api_url = format!(
         "https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
     );
     let client = reqwest::Client::builder()
@@ -111,24 +127,38 @@ async fn fetch_release() -> Result<GithubRelease, String> {
         .build()
         .map_err(|e| format!("HTTP 客户端初始化失败：{e}"))?;
 
-    let resp = client
-        .get(&url)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| format!("检查更新失败：{e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("检查更新失败：HTTP {}", resp.status().as_u16()));
+    let mut last_err = String::from("检查更新失败：直连与加速节点均不可用");
+    for url in fallback_urls(&api_url) {
+        let resp = match client
+            .get(&url)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = format!("检查更新失败：{e}");
+                continue;
+            }
+        };
+        if !resp.status().is_success() {
+            last_err = format!("检查更新失败：HTTP {}", resp.status().as_u16());
+            continue;
+        }
+        match resp.json::<GithubRelease>().await {
+            Ok(release) => {
+                if release.prerelease.unwrap_or(false) || release.draft.unwrap_or(false) {
+                    return Err("当前最新版本为预发布版本，已跳过".to_string());
+                }
+                return Ok(release);
+            }
+            Err(e) => {
+                last_err = format!("解析版本信息失败：{e}");
+                continue;
+            }
+        }
     }
-    let release: GithubRelease = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析版本信息失败：{e}"))?;
-
-    if release.prerelease.unwrap_or(false) || release.draft.unwrap_or(false) {
-        return Err("当前最新版本为预发布版本，已跳过".to_string());
-    }
-    Ok(release)
+    Err(last_err)
 }
 
 /// 检查是否存在更新；网络/解析失败时返回 Err，由调用方决定静默忽略或提示
@@ -179,28 +209,36 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// 下载更新包到系统临时目录，流式回传进度；优先校验 SHA256，缺失时回退校验文件大小
-#[tauri::command]
-pub async fn download_update(
-    app: AppHandle,
-    url: String,
-    file_name: String,
-    digest: Option<String>,
+/// 校验已落盘的更新包：优先 SHA256，digest 缺失时回退文件大小比对
+fn verify_asset(path: &Path, digest: Option<&str>, expected_size: u64) -> Result<(), String> {
+    if let Some(d) = digest.filter(|s| !s.is_empty()) {
+        let expected = d.strip_prefix("sha256:").unwrap_or(d).to_lowercase();
+        let actual = sha256_file(path)?;
+        if actual != expected {
+            return Err("更新包校验失败：哈希不一致，文件可能已损坏或被篡改".to_string());
+        }
+    } else if expected_size > 0 {
+        let meta = fs::metadata(path).map_err(|e| format!("读取临时文件失败：{e}"))?;
+        if meta.len() != expected_size {
+            return Err(format!(
+                "更新包大小不一致：期望 {expected_size} 字节，实际 {} 字节",
+                meta.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 从单个候选地址流式下载到目标文件，过程中回传进度；失败时由调用方清理半截文件
+async fn stream_to_file(
+    client: &reqwest::Client,
+    app: &AppHandle,
+    url: &str,
+    dest: &Path,
     expected_size: u64,
-) -> Result<String, String> {
-    let tmp_dir = std::env::temp_dir().join(UPDATE_TMP_DIR);
-    fs::create_dir_all(&tmp_dir).map_err(|e| format!("临时目录创建失败：{e}"))?;
-    let dest = tmp_dir.join(&file_name);
-    let _ = fs::remove_file(&dest);
-
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(Duration::from_secs(300))
-        .build()
-        .map_err(|e| format!("HTTP 客户端初始化失败：{e}"))?;
-
+) -> Result<(), String> {
     let resp = client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .map_err(|e| format!("下载更新包失败：{e}"))?;
@@ -209,7 +247,7 @@ pub async fn download_update(
     }
     let total = resp.content_length().unwrap_or(expected_size);
 
-    let mut file = fs::File::create(&dest).map_err(|e| format!("临时文件创建失败：{e}"))?;
+    let mut file = fs::File::create(dest).map_err(|e| format!("临时文件创建失败：{e}"))?;
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -223,26 +261,55 @@ pub async fn download_update(
     }
     file.flush().map_err(|e| format!("刷新临时文件失败：{e}"))?;
     drop(file);
+    Ok(())
+}
 
-    // 完整性校验：优先 SHA256，digest 缺失时回退大小比对
-    if let Some(d) = digest.filter(|s| !s.is_empty()) {
-        let expected = d.strip_prefix("sha256:").unwrap_or(&d).to_lowercase();
-        let actual = sha256_file(&dest)?;
-        if actual != expected {
-            let _ = fs::remove_file(&dest);
-            return Err("更新包校验失败：哈希不一致，文件可能已损坏或被篡改".to_string());
-        }
-    } else if expected_size > 0 {
-        let meta = fs::metadata(&dest).map_err(|e| format!("读取临时文件失败：{e}"))?;
-        if meta.len() != expected_size {
-            let _ = fs::remove_file(&dest);
-            return Err(format!(
-                "更新包大小不一致：期望 {expected_size} 字节，实际 {} 字节",
-                meta.len()
-            ));
+/// 下载更新包到系统临时目录，直连失败后依次回退加速节点；流式回传进度，优先校验 SHA256
+#[tauri::command]
+pub async fn download_update(
+    app: AppHandle,
+    url: String,
+    file_name: String,
+    digest: Option<String>,
+    expected_size: u64,
+) -> Result<String, String> {
+    let tmp_dir = std::env::temp_dir().join(UPDATE_TMP_DIR);
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("临时目录创建失败：{e}"))?;
+    let dest = tmp_dir.join(&file_name);
+
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|e| format!("HTTP 客户端初始化失败：{e}"))?;
+
+    let mut last_err = String::from("下载更新包失败：直连与加速节点均不可用");
+    let mut verified = false;
+
+    for dl_url in fallback_urls(&url) {
+        let _ = fs::remove_file(&dest);
+        match stream_to_file(&client, &app, &dl_url, &dest, expected_size).await {
+            Ok(_) => match verify_asset(&dest, digest.as_deref(), expected_size) {
+                Ok(()) => {
+                    verified = true;
+                    break;
+                }
+                Err(e) => {
+                    last_err = e;
+                    let _ = fs::remove_file(&dest);
+                }
+            },
+            Err(e) => {
+                last_err = e;
+                let _ = fs::remove_file(&dest);
+            }
         }
     }
 
+    if !verified {
+        let _ = fs::remove_file(&dest);
+        return Err(last_err);
+    }
     Ok(dest.to_string_lossy().to_string())
 }
 
