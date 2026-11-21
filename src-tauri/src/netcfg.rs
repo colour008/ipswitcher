@@ -1,9 +1,13 @@
 use crate::encoding::decode_bytes;
 use crate::process::suppress_window;
 use crate::types::AdapterInfo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::NetworkManagement::IpHelper::{
+    FreeMibTable, GetIfTable2, MIB_IF_TABLE2,
+};
 
 /// 判断当前进程是否具备管理员权限
 pub fn is_admin() -> bool {
@@ -110,6 +114,72 @@ pub fn list_adapters() -> Result<Vec<AdapterInfo>, String> {
     let adapters: Vec<AdapterInfo> =
         serde_json::from_str(&arr_text).map_err(|e| format!("网卡信息解析失败：{e}"))?;
     Ok(adapters)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdapterTrafficCounters {
+    pub sent_bytes: u64,
+    pub received_bytes: u64,
+}
+
+/// GetIfTable2 分配的网卡表由 FreeMibTable 释放。
+#[cfg(target_os = "windows")]
+struct IfTable(*mut MIB_IF_TABLE2);
+
+#[cfg(target_os = "windows")]
+impl Drop for IfTable {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { FreeMibTable(self.0.cast()) };
+        }
+    }
+}
+
+/// 通过 Windows IP Helper API 读取指定网卡的累计收发字节数，不启动外部进程。
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn get_adapter_traffic(name: String) -> Result<AdapterTrafficCounters, String> {
+    let mut raw_table: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
+    let result = unsafe { GetIfTable2(&mut raw_table) };
+    let table = IfTable(raw_table);
+    if result != 0 {
+        return Err(format!("读取网卡统计失败（Windows 错误码 {result}）"));
+    }
+    if table.0.is_null() {
+        return Err("Windows 未返回网卡统计表".to_string());
+    }
+
+    let name_utf16: Vec<u16> = name.encode_utf16().collect();
+    let row = unsafe {
+        let table_ref = &*table.0;
+        std::slice::from_raw_parts(
+            table_ref.Table.as_ptr(),
+            table_ref.NumEntries as usize,
+        )
+        .iter()
+        .find(|row| {
+            let end = row
+                .Alias
+                .iter()
+                .position(|unit| *unit == 0)
+                .unwrap_or(row.Alias.len());
+            &row.Alias[..end] == name_utf16.as_slice()
+        })
+        .copied()
+    }
+    .ok_or_else(|| format!("未找到网卡“{name}”的统计信息"))?;
+
+    Ok(AdapterTrafficCounters {
+        sent_bytes: row.OutOctets,
+        received_bytes: row.InOctets,
+    })
+}
+
+/// 桌面版本面向 Windows；该占位实现让其他平台仍可完成编译。
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn get_adapter_traffic(_name: String) -> Result<AdapterTrafficCounters, String> {
+    Err("流量监控仅支持 Windows".to_string())
 }
 
 #[derive(Debug, Deserialize)]

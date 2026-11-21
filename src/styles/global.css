@@ -224,6 +224,21 @@ body {
 	border-color: var(--panel-border) !important;
 }
 
+/* 挂件透明度提示保持紧凑，避免顶部操作行附近遮挡内容 */
+.widget-opacity-tip.el-popper {
+	min-height: 0;
+	padding: 3px 6px;
+	font-size: 9px;
+	line-height: 1.2;
+}
+
+.widget-control-tip.el-popper {
+	min-height: 0;
+	padding: 3px 6px;
+	font-size: 9px;
+	line-height: 1.2;
+}
+
 /* 调试模式自绘右键菜单（仅「检查元素」），跟随深浅主题 */
 .dev-context-menu {
 	position: fixed;

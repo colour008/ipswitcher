@@ -14,6 +14,12 @@ export interface AdapterInfo {
   dns: string[];
 }
 
+/** Network interface counters reported by Windows. */
+export interface AdapterTrafficCounters {
+  sent_bytes: number;
+  received_bytes: number;
+}
+
 /** 保存的 IP 方案 */
 export interface IpProfile {
   id: string;
@@ -41,6 +47,33 @@ export interface AppConfig {
   widget_width?: number | null;
   widget_height?: number | null;
   theme?: "light" | "dark" | null;
+  host_history?: HostHistory[];
+}
+
+/** Previously responsive hosts, used to distinguish offline from never discovered. */
+export interface HostHistory {
+  adapter: string;
+  network: string;
+  ip: string;
+  last_seen: number;
+  hostname?: string | null;
+  mac?: string | null;
+}
+
+export interface ScanHostResult {
+  task_id: string;
+  ip: string;
+  status: "online" | "offline" | "undiscovered";
+  last_seen: number | null;
+  hostname: string | null;
+  mac: string | null;
+}
+
+export interface ScanDoneResult {
+  task_id: string;
+  scanned: number;
+  cancelled: boolean;
+  error: string | null;
 }
 
 export interface StaticInput {

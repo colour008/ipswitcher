@@ -297,6 +297,9 @@ async function saveProfile() {
 			<div class="current-head">
 				<div class="current-info">
 					<div class="current-title">
+						<span
+							class="current-status-dot"
+							:class="adapter?.status === 'connected' ? 'is-connected' : 'is-disconnected'"></span>
 						{{ adapter?.name || '未选择网卡' }}
 					</div>
 					<div class="current-desc muted">
@@ -353,7 +356,7 @@ async function saveProfile() {
 					{{ adapter?.dns[1] || '-' }}
 				</el-descriptions-item>
 				<el-descriptions-item label="MAC 地址" :span="2">
-					<code>{{ adapter?.mac || '-' }}</code>
+					<span>{{ adapter?.mac || '-' }}</span>
 				</el-descriptions-item>
 			</el-descriptions>
 		</div>
@@ -554,15 +557,17 @@ async function saveProfile() {
 .current-card,
 .form-col,
 .profile-col {
-	padding: 10px;
+	padding: 12px;
 }
 .current-card {
 	overflow: hidden;
+	background: linear-gradient(145deg, var(--panel-glass), var(--panel-bg));
 }
 .card-title {
-	font-size: 14px;
+	font-size: 15px;
 	font-weight: 600;
 	margin-bottom: 8px;
+	letter-spacing: 0.015em;
 }
 .current-head {
 	display: flex;
@@ -576,8 +581,24 @@ async function saveProfile() {
 	min-width: 0;
 }
 .current-title {
-	font-size: 15px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 16px;
 	font-weight: 700;
+}
+.current-status-dot {
+	width: 8px;
+	height: 8px;
+	flex: none;
+	border-radius: 50%;
+}
+.current-status-dot.is-connected {
+	background: var(--success);
+	box-shadow: 0 0 8px rgba(74, 222, 128, 0.35);
+}
+.current-status-dot.is-disconnected {
+	background: var(--text-secondary);
 }
 .current-desc {
 	font-size: 12px;
@@ -613,12 +634,22 @@ async function saveProfile() {
 	width: 110px;
 	background: var(--app-bg);
 	color: var(--text-secondary);
+	font-size: 12px;
+	font-weight: 600;
 }
 .desc :deep(.el-descriptions__table) {
 	border-color: var(--panel-border);
+	border-radius: 8px;
+	overflow: hidden;
 }
 .desc :deep(.el-descriptions__cell) {
 	border-color: var(--panel-border);
+	padding: 8px 12px;
+	font-size: 13px;
+}
+.desc :deep(.el-descriptions__content) {
+	color: var(--text-primary);
+	font-variant-numeric: tabular-nums;
 }
 
 .target-grid {
@@ -635,6 +666,10 @@ async function saveProfile() {
 	min-height: 0;
 	height: 100%;
 	overflow-y: auto;
+}
+.form-col > .card-title {
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--panel-border);
 }
 .mode-radio {
 	margin-bottom: 8px;
@@ -703,6 +738,8 @@ async function saveProfile() {
 	align-items: center;
 	justify-content: space-between;
 	margin-bottom: 10px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--panel-border);
 }
 .profile-header .card-title {
 	margin-bottom: 0;

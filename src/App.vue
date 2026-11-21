@@ -26,8 +26,10 @@ import {
 } from '@/composables/useStore';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import AdapterList from '@/components/AdapterList.vue';
+import TrafficMonitor from '@/components/TrafficMonitor.vue';
 import AdapterDetail from '@/components/AdapterDetail.vue';
 import Diagnostics from '@/components/Diagnostics.vue';
+import NetworkScan from '@/components/NetworkScan.vue';
 import { Setting, Connection, Sunny, Moon, Link } from '@element-plus/icons-vue';
 
 const admin = ref(false);
@@ -261,7 +263,8 @@ async function onCreateShortcut() {
 
 		<div class="app-body" ref="bodyRef">
 			<aside class="sidebar" :style="{ width: sidebarWidth + 'px' }">
-				<AdapterList @refresh="refreshAdapters" />
+				<AdapterList class="sidebar-adapter-list" @refresh="refreshAdapters" />
+				<TrafficMonitor />
 			</aside>
 			<div
 				class="splitter"
@@ -272,6 +275,9 @@ async function onCreateShortcut() {
 				<el-tabs v-model="activeTab" class="main-tabs">
 					<el-tab-pane label="IP 配置" name="ip">
 						<AdapterDetail />
+					</el-tab-pane>
+					<el-tab-pane label="主机扫描" name="scan">
+						<NetworkScan />
 					</el-tab-pane>
 					<el-tab-pane label="网络诊断" name="diag">
 						<Diagnostics />
@@ -409,9 +415,15 @@ async function onCreateShortcut() {
 	min-width: 0;
 	height: 100%;
 	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	overflow: hidden;
 	width: 100%;
 }
-.sidebar > * {
+.sidebar-adapter-list {
+	flex: 1;
+	min-height: 0;
+	height: auto;
 	width: 100%;
 }
 .splitter {

@@ -156,6 +156,21 @@ function tokenize(line: string): Token[] {
 	if (last < line.length) tokens.push({ text: line.slice(last), cls: '' });
 	return tokens;
 }
+
+function lineClass(line: string): string {
+	const text = line.trim();
+	if (!text) return 'is-blank';
+	if (/(失败|错误|超时|无法到达|unreachable|could not|fail\w*)/i.test(text))
+		return 'is-error';
+	if (/(已完成|成功|statistics|统计信息)/i.test(text)) return 'is-summary';
+	if (
+		/^(Windows IP 配置|以太网适配器|无线局域网适配器|接口列表|接口:|Interface:|Internet 地址|网络目标|Active Connections|IPv4 Route Table|IPv4 路由表|路由表)/i.test(
+			text
+		)
+	)
+		return 'is-section';
+	return '';
+}
 </script>
 
 <template>
@@ -213,6 +228,19 @@ function tokenize(line: string): Token[] {
 		</div>
 
 		<div class="panel diag-output">
+			<div class="diag-output-header">
+				<div class="output-title-group">
+					<span class="output-status-dot" :class="{ running }"></span>
+					<span class="output-title">命令输出</span>
+					<span class="output-command">
+						{{ activePresetObj.label }}
+						{{ activePresetObj.needTarget && target ? target : '' }}
+					</span>
+				</div>
+				<span class="output-state" :class="{ running }">
+					{{ running ? '执行中' : lines.length ? '已完成' : '就绪' }}
+				</span>
+			</div>
 			<div v-if="running" class="diag-progress">
 				<div class="progress-bar"></div>
 			</div>
@@ -220,7 +248,11 @@ function tokenize(line: string): Token[] {
 				<div v-if="!lines.length && !running" class="diag-empty muted">
 					选择命令后点击「执行命令」，结果将在此显示
 				</div>
-				<div v-for="(line, i) in lines" :key="i" class="diag-line">
+				<div
+					v-for="(line, i) in lines"
+					:key="i"
+					class="diag-line"
+					:class="lineClass(line)">
 					<template v-for="(t, j) in tokenize(line)" :key="j">
 						<span :class="t.cls">{{ t.text }}</span>
 					</template>
@@ -237,19 +269,59 @@ function tokenize(line: string): Token[] {
 	gap: 10px;
 	height: 100%;
 	min-height: 0;
+	font-family: inherit;
 }
 .diag-toolbar {
-	padding: 10px 12px;
+	padding: 12px;
 	display: flex;
 	flex-direction: column;
-	gap: 10px;
+	gap: 12px;
 }
 .preset-row {
 	flex-wrap: wrap;
 }
+.preset-row :deep(.el-radio-group) {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.preset-row :deep(.el-radio-button__inner) {
+	border: 1px solid var(--panel-border-glass);
+	border-left: 1px solid var(--panel-border-glass);
+	border-radius: 7px;
+	background: var(--app-bg);
+	box-shadow: none;
+	color: var(--text-secondary);
+	font-family: inherit;
+	font-size: 12px;
+	transition:
+		background 0.15s,
+		border-color 0.15s,
+	color 0.15s;
+}
+.preset-row :deep(.el-radio-button__inner:hover) {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+.preset-row
+	:deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	box-shadow: none;
+	color: var(--accent);
+}
 .arg-row {
 	display: flex;
 	gap: 8px;
+}
+.diag-toolbar :deep(.el-input__wrapper) {
+	min-height: 36px;
+	font-family: inherit;
+	font-size: 12px;
+}
+.diag-toolbar :deep(.el-input__inner) {
+	font-family: inherit;
+	font-size: 12px;
 }
 .target-input {
 	flex: 1;
@@ -258,6 +330,12 @@ function tokenize(line: string): Token[] {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+}
+.diag-toolbar :deep(.el-button) {
+	min-height: 34px;
+	border-radius: 7px;
+	font-family: inherit;
+	font-size: 12px;
 }
 .run-hint {
 	font-size: 12px;
@@ -270,6 +348,61 @@ function tokenize(line: string): Token[] {
 	overflow: hidden;
 	display: flex;
 	flex-direction: column;
+}
+.diag-output-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	flex: none;
+	min-height: 36px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--panel-border);
+	background: linear-gradient(90deg, var(--accent-soft), var(--panel-bg) 65%);
+}
+.output-title-group {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+.output-status-dot {
+	width: 7px;
+	height: 7px;
+	flex: none;
+	border-radius: 50%;
+	background: var(--text-secondary);
+}
+.output-status-dot.running {
+	background: var(--accent);
+	box-shadow: 0 0 8px rgba(76, 141, 255, 0.55);
+}
+.output-title {
+	color: var(--text-primary);
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}
+.output-command {
+	max-width: min(48vw, 420px);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	padding: 2px 7px;
+	border: 1px solid var(--panel-border);
+	border-radius: 5px;
+	background: var(--app-bg);
+	color: var(--text-secondary);
+	font-size: 11px;
+}
+.output-state {
+	flex: none;
+	color: var(--text-secondary);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+.output-state.running {
+	color: var(--accent);
 }
 .diag-progress {
 	height: 3px;
@@ -295,17 +428,44 @@ function tokenize(line: string): Token[] {
 	flex: 1;
 	overflow-y: auto;
 	padding: 10px 12px;
-	font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
-	font-size: 13px;
-	line-height: 1.6;
+	font-family: inherit;
+	font-size: 12px;
+	line-height: 1.7;
+	font-variant-numeric: tabular-nums;
 	white-space: pre-wrap;
 	word-break: break-all;
 }
 .diag-line {
-	min-height: 1.6em;
+	min-height: 1.7em;
+	padding: 1px 7px;
+	border-left: 2px solid transparent;
+	border-radius: 3px;
+	transition: background 0.12s;
+}
+.diag-line:hover {
+	background: var(--accent-soft);
+}
+.diag-line.is-blank {
+	padding: 0;
+}
+.diag-line.is-section {
+	margin-top: 8px;
+	padding-top: 4px;
+	padding-bottom: 4px;
+	border-bottom: 1px solid var(--panel-border);
+	color: var(--text-primary);
+	font-weight: 600;
+}
+.diag-line.is-error {
+	border-left-color: var(--danger);
+	background: rgba(245, 108, 108, 0.07);
+}
+.diag-line.is-summary {
+	color: var(--success);
+	font-weight: 600;
 }
 .diag-empty {
-	font-size: 13px;
+	font-size: 12px;
 	padding: 12px 4px;
 }
 .tok-ip {

@@ -2,13 +2,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AdapterInfo,
+  AdapterTrafficCounters,
   AppConfig,
   IpProfile,
   PendingAction,
   StaticInput,
+  ScanHostResult,
+  ScanDoneResult,
 } from "@/types";
 
 export const listAdapters = () => invoke<AdapterInfo[]>("list_adapters");
+export const getAdapterTraffic = (name: string) =>
+  invoke<AdapterTrafficCounters>("get_adapter_traffic", { name });
 
 export const applyStatic = (input: StaticInput) =>
   invoke<string>("apply_static", { input });
@@ -38,6 +43,18 @@ export const runDiagnostic = (
 
 export const stopDiagnostic = (taskId: string) =>
   invoke<void>("stop_diagnostic", { taskId });
+
+export const runHostScan = (taskId: string, adapter: string, ip: string, mask: string) =>
+  invoke<void>("run_host_scan", { taskId, adapter, ip, mask });
+
+export const stopHostScan = (taskId: string) =>
+  invoke<void>("stop_host_scan", { taskId });
+
+export const onScanHostResult = (cb: (p: ScanHostResult) => void) =>
+  listen<ScanHostResult>("scan-host-result", (e) => cb(e.payload));
+
+export const onScanDone = (cb: (p: ScanDoneResult) => void) =>
+  listen<ScanDoneResult>("scan-done", (e) => cb(e.payload));
 
 export const elevateAction = (action: PendingAction) =>
   invoke<void>("elevate_action", { action });

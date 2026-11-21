@@ -10,6 +10,10 @@ import {
 	Connection,
 	Link,
 	Odometer,
+	Top,
+	Bottom,
+	ArrowDown,
+	Check,
 } from '@element-plus/icons-vue';
 import {
 	getCurrentWindow,
@@ -20,6 +24,7 @@ import {
 import {
 	applyDhcp,
 	applyStatic,
+	getAdapterTraffic,
 	elevateAction,
 	getConfig,
 	listAdapters,
@@ -43,38 +48,44 @@ const appConfig = ref<AppConfig>({ default_adapter: null, profiles: [] });
 const applying = ref<null | 'dhcp' | 'static'>(null);
 /// 背景不透明度（0.0 ~ 1.0），仅作用于卡片背景，字体始终保持不透明
 const opacity = ref<number>(0.92);
-/// 顶部透明度面板是否展开（鼠标悬停上边界时显示）
-const panelOpen = ref<boolean>(false);
-/// 面板高度（逻辑像素），展开时据此临时增高窗口
-const PANEL_HEIGHT = 34;
 /// 挂件固定基线高度，纵向不可调整
-const BASE_HEIGHT = 194;
+const BASE_HEIGHT = 246;
 /// 横向拉宽区间（逻辑像素）
 const WIDTH_MIN = 240;
 const WIDTH_MAX = 640;
-/// 网卡下拉是否展开；展开时临时向下增高窗口以容纳向下弹出的列表
+/// 网卡列表在底部向下展开时临时扩展窗口底部
 const selectOpen = ref<boolean>(false);
+const SELECT_MENU_MAX_HEIGHT = 180;
 /// 固定（鼠标穿透）状态：固定后位置锁定、停用拖拽缩放与悬停交互
 const pinned = ref<boolean>(false);
 /// 「暂无固定 IP 方案」自绘提示框是否显示
 const showNoProfile = ref<boolean>(false);
+const uploadRate = ref(0);
+const downloadRate = ref(0);
+let trafficTimer: number | undefined;
+let trafficSampling = false;
+let trafficBaseline: {
+	name: string;
+	sent: number;
+	received: number;
+	at: number;
+} | null = null;
 
 /// 由背景透明度派生各处 alpha，以数值直接写入 CSS 变量（rgba alpha 内 calc 乘法在 WebView 中会失效）
 const styleVars = computed(() => ({
 	'--widget-bg-alpha': opacity.value,
 	'--root-border-alpha': 0.12 * opacity.value,
-	'--select-bg-alpha': 0.06 * opacity.value,
+	'--select-bg-alpha': 0.035 * opacity.value,
 	'--select-border-alpha': 0.14 * opacity.value,
-	'--btn-bg-alpha': 0.06 * opacity.value,
-	'--btn-border-alpha': Math.max(0.18, 0.16 * opacity.value),
+	'--btn-bg-alpha': 0.03 * opacity.value,
+	'--btn-border-alpha': Math.max(0.1, 0.1 * opacity.value),
 	'--primary-bg-alpha': 0.9 * opacity.value,
 	'--primary-border-alpha': Math.max(0.45, 0.9 * opacity.value),
-	'--panel-border-alpha': 0.1 * opacity.value,
+	'--panel-border-alpha': 0.055 * opacity.value,
 }));
 
-/// 主体基础几何（不含面板/下拉），浮层展开时临时改几何、收起后恢复；两个浮层各自保存基线
-let panelGeom: { x: number; y: number; h: number } | null = null;
-let selectGeom: { x: number; y: number; h: number } | null = null;
+/// 网卡菜单展开期间临时扩展窗口底部，不将临时尺寸写入配置
+let selectGeom: { x: number; y: number; w: number; h: number } | null = null;
 /// 浮层开合引起的尺寸/位置变化不落盘
 let suppressPersist = false;
 
@@ -107,6 +118,63 @@ async function refresh() {
 	// 注意：挂件自身刷新后不再广播 adapters-changed，避免主窗/挂件互相触发形成刷新环
 }
 
+/// 每秒读取所选网卡的系统累计计数，并用相邻采样差计算实时速率
+async function sampleTraffic() {
+	const name = currentName.value;
+	if (!name || trafficSampling) return;
+	trafficSampling = true;
+	try {
+		const counters = await getAdapterTraffic(name);
+		const now = Date.now();
+		if (currentName.value !== name) return;
+		if (trafficBaseline?.name === name) {
+			const elapsed = (now - trafficBaseline.at) / 1000;
+			const sent = Math.max(
+				0,
+				counters.sent_bytes - trafficBaseline.sent,
+			);
+			const received = Math.max(
+				0,
+				counters.received_bytes - trafficBaseline.received,
+			);
+			uploadRate.value = elapsed > 0 && elapsed <= 3 ? sent / elapsed : 0;
+			downloadRate.value =
+				elapsed > 0 && elapsed <= 3 ? received / elapsed : 0;
+		} else {
+			uploadRate.value = 0;
+			downloadRate.value = 0;
+		}
+		trafficBaseline = {
+			name,
+			sent: counters.sent_bytes,
+			received: counters.received_bytes,
+			at: now,
+		};
+	} catch {
+		if (currentName.value === name) {
+			uploadRate.value = 0;
+			downloadRate.value = 0;
+			trafficBaseline = null;
+		}
+	} finally {
+		trafficSampling = false;
+	}
+}
+
+function formatTrafficRate(value: number): string {
+	if (!Number.isFinite(value) || value < 1024) {
+		return `${Math.max(0, value).toFixed(0)} B/s`;
+	}
+	const units = ['KB/s', 'MB/s', 'GB/s', 'TB/s'];
+	let amount = value / 1024;
+	let unit = 0;
+	while (amount >= 1024 && unit < units.length - 1) {
+		amount /= 1024;
+		unit++;
+	}
+	return `${amount.toFixed(amount >= 100 ? 0 : 1)} ${units[unit]}`;
+}
+
 let widgetTimers: number[] = [];
 
 /// 切换配置后立即 + 延时两次刷新本地列表，最后一次刷新后广播给主窗，等待 DHCP 租约 / IP 配置收敛
@@ -130,6 +198,8 @@ async function init() {
 	appConfig.value = normalizeConfig(await getConfig());
 	opacity.value = appConfig.value.widget_opacity ?? 0.92;
 	await refresh();
+	void sampleTraffic();
+	trafficTimer = window.setInterval(() => void sampleTraffic(), 1000);
 }
 
 /// 主窗保存方案 / 默认网卡后，重载本地配置并刷新网卡列表
@@ -173,13 +243,27 @@ function handleOpenDevTools() {
 }
 
 function onDocPointerDown(e: MouseEvent) {
-	if (!devMenuVisible.value) return;
-	if ((e.target as HTMLElement).closest('.dev-context-menu')) return;
-	closeDevMenu();
+	const target = e.target as HTMLElement;
+	if (devMenuVisible.value && !target.closest('.dev-context-menu')) {
+		closeDevMenu();
+	}
+	if (selectOpen.value && !target.closest('.adapter-picker')) {
+		selectOpen.value = false;
+	}
 }
 
 function onDocKeydown(e: KeyboardEvent) {
-	if (e.key === 'Escape') closeDevMenu();
+	if (e.key !== 'Escape') return;
+	if (selectOpen.value) {
+		selectOpen.value = false;
+		return;
+	}
+	closeDevMenu();
+}
+
+function chooseAdapter(name: string) {
+	currentName.value = name;
+	selectOpen.value = false;
 }
 
 onMounted(init);
@@ -206,6 +290,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+	if (trafficTimer !== undefined) window.clearInterval(trafficTimer);
 	if (unlisten) void unlisten();
 	if (pinUnlisten) void pinUnlisten();
 	if (configUnlisten) void configUnlisten();
@@ -217,6 +302,10 @@ onUnmounted(() => {
 
 watch(currentName, async (name) => {
 	if (!name) return;
+	trafficBaseline = null;
+	uploadRate.value = 0;
+	downloadRate.value = 0;
+	void sampleTraffic();
 	appConfig.value.widget_adapter = name;
 	// 挂件选中的网卡同时作为默认网卡，便于主窗口与快速切换联动
 	appConfig.value.default_adapter = name;
@@ -224,8 +313,8 @@ watch(currentName, async (name) => {
 });
 
 async function persistSize() {
-	// 浮层（面板/下拉）展开期间窗口处于临时扩窗态，不把临时尺寸落盘
-	if (suppressPersist || panelGeom || selectGeom) return;
+	// 下拉展开期间窗口处于临时扩窗态，不把临时尺寸落盘
+	if (suppressPersist || selectGeom) return;
 	const win = getCurrentWindow();
 	const size = await win.innerSize();
 	const scale = await win.scaleFactor();
@@ -233,97 +322,63 @@ async function persistSize() {
 	await saveWidgetSize(size.width / scale, BASE_HEIGHT);
 }
 
-/// 下拉列表所需高度（逻辑像素）：网卡名+描述多为两行，每项预留约 44px 并限幅
-function listHeight() {
-	const rows = adapters.value.length || 1;
-	return Math.min(240, Math.max(140, rows * 44 + 20));
-}
-
-/// 读取浮层内各选项实际布局高度求和，得到列表所需高度；offsetHeight 不受入场位移动画影响
-function measureListHeight(): number {
-	const popper = document.querySelector<HTMLElement>('.widget-select-popper');
-	if (!popper) return listHeight();
-	const items = [
-		...popper.querySelectorAll<HTMLElement>('.el-select-dropdown__item'),
-	];
-	if (!items.length) return listHeight();
-	let itemsH = 0;
-	for (const it of items) {
-		const cs = getComputedStyle(it);
-		itemsH +=
-			it.offsetHeight +
-			parseFloat(cs.marginTop) +
-			parseFloat(cs.marginBottom);
-	}
-	const popperPad = 8; // 浮层上下 padding 4px*2
-	const listPad = 4; // 列表上下 padding 2px*2
-	const gap = 8; // 下拉框到浮层的间隙
-	return Math.min(240, Math.max(140, itemsH + popperPad + listPad + gap));
-}
-
 async function captureGeom() {
 	const win = getCurrentWindow();
-	const scale = await win.scaleFactor();
-	const size = await win.innerSize();
-	const pos = await win.outerPosition();
+	const [scale, size, pos] = await Promise.all([
+		win.scaleFactor(),
+		win.innerSize(),
+		win.outerPosition(),
+	]);
 	return {
 		x: pos.x / scale,
 		y: pos.y / scale,
+		w: size.width / scale,
 		h: size.height / scale,
 	};
 }
 
-/// 面板在顶部向上探出：展开时增高并上移窗口，收起后恢复主体几何；该过程不落盘
-watch(panelOpen, async (open) => {
-	const win = getCurrentWindow();
-	const scale = await win.scaleFactor();
-	const size = await win.innerSize();
-	const w = size.width / scale;
-	if (open) {
-		if (!panelGeom) panelGeom = await captureGeom();
-		const g = panelGeom;
-		suppressPersist = true;
-		await win.setSize(new LogicalSize(w, g.h + PANEL_HEIGHT));
-		await win.setPosition(
-			new LogicalPosition(g.x, Math.max(0, g.y - PANEL_HEIGHT)),
-		);
-		window.setTimeout(() => {
-			suppressPersist = false;
-		}, 300);
-	} else if (panelGeom) {
-		const g = panelGeom;
-		suppressPersist = true;
-		await win.setSize(new LogicalSize(w, g.h));
-		await win.setPosition(new LogicalPosition(g.x, g.y));
-		panelGeom = null;
-		window.setTimeout(() => {
-			suppressPersist = false;
-		}, 300);
-	}
-});
+function adapterMenuHeight() {
+	return (
+		Math.min(
+			SELECT_MENU_MAX_HEIGHT,
+			Math.max(38, adapters.value.length * 38),
+		) + 10
+	);
+}
 
-/// 下拉在底部向下弹出：展开时向下增高窗口，收起后恢复主体几何；该过程不落盘
+/// 网卡菜单在底部向下展开，临时扩展窗口底边；该过程不落盘
 watch(selectOpen, async (open) => {
 	const win = getCurrentWindow();
-	const scale = await win.scaleFactor();
-	const size = await win.innerSize();
-	const w = size.width / scale;
 	if (open) {
 		if (!selectGeom) selectGeom = await captureGeom();
+		if (!selectOpen.value || !selectGeom) {
+			selectGeom = null;
+			return;
+		}
 		const g = selectGeom;
-		suppressPersist = true;
 		await nextTick();
-		await new Promise((r) => requestAnimationFrame(() => r(null)));
-		// 整体高度 = 基线组件高度 + 下拉列表实测高度
-		const listH = measureListHeight();
-		await win.setSize(new LogicalSize(w, g.h + listH));
+		if (!selectOpen.value) return;
+		const rootRect = document
+			.querySelector('.widget-root')
+			?.getBoundingClientRect();
+		const menuRect = document
+			.querySelector('.adapter-menu')
+			?.getBoundingClientRect();
+		const menuSpace =
+			rootRect && menuRect
+				? Math.max(0, Math.ceil(menuRect.bottom - rootRect.bottom))
+				: adapterMenuHeight() + 6;
+		suppressPersist = true;
+		await win.setSize(new LogicalSize(g.w, g.h + menuSpace));
+		await win.setPosition(new LogicalPosition(g.x, g.y));
 		window.setTimeout(() => {
 			if (selectOpen.value) suppressPersist = false;
 		}, 300);
 	} else if (selectGeom) {
 		const g = selectGeom;
 		suppressPersist = true;
-		await win.setSize(new LogicalSize(w, g.h));
+		await win.setSize(new LogicalSize(g.w, g.h));
+		await win.setPosition(new LogicalPosition(g.x, g.y));
 		selectGeom = null;
 		window.setTimeout(() => {
 			suppressPersist = false;
@@ -337,26 +392,6 @@ async function onOpacityChange(v: number) {
 	await saveConfig(appConfig.value);
 	// 持久化到后端配置（保持命令契约，便于重启后恢复背景透明度）
 	await setWidgetOpacity(v);
-	applyPopperAlpha();
-}
-
-/// 下拉弹层挂在 body 下，不继承挂件 CSS 变量；展开/透明度变化时同步其背景与边框透明度
-function applyPopperAlpha() {
-	document
-		.querySelectorAll<HTMLElement>('.widget-select-popper')
-		.forEach((el) => {
-			el.style.setProperty('--popper-alpha', String(opacity.value));
-			el.style.setProperty(
-				'--popper-border-alpha',
-				String(0.14 * opacity.value),
-			);
-		});
-}
-
-/// 下拉展开后弹层才挂载，需在可见性变化时补刷一次背景透明度
-function onSelectVisible(visible: boolean) {
-	selectOpen.value = visible;
-	if (visible) requestAnimationFrame(applyPopperAlpha);
 }
 
 async function handleApplyError(e: unknown) {
@@ -441,8 +476,8 @@ function onDragStart(e: PointerEvent) {
 	if (pinned.value) return;
 	if (e.button !== 0) return;
 	const el = e.target as HTMLElement;
-	// 滑块轨道/手柄保留自身拖拽，不参与窗口拖动
-	if (el.closest('.el-slider')) return;
+	// 控件自身保留点击/拖动交互，不参与窗口拖动
+	if (el.closest('button, .adapter-picker, .el-slider, .el-button')) return;
 	const start = { x: e.clientX, y: e.clientY, moved: false };
 	const onMove = (ev: PointerEvent) => {
 		if (!start || start.moved) return;
@@ -524,46 +559,84 @@ async function openMain() {
 
 <template>
 	<el-config-provider :locale="zhCn">
-	<div
-		class="widget-root dark"
-		:class="{ pinned }"
-		:style="styleVars"
-		@pointerdown="onDragStart"
-		@contextmenu="onContextMenu">
-		<teleport to="body">
-			<div
-				v-if="devMenuVisible"
-				class="dev-context-menu"
-				:style="{ left: devMenuPos.x + 'px', top: devMenuPos.y + 'px' }"
-				@contextmenu.stop.prevent
-			>
-				<div class="dev-menu-item" @click="handleOpenDevTools">检查元素</div>
-			</div>
-		</teleport>
-		<!-- 顶部边缘热区 + 透明度面板：仅鼠标移入顶部窄条才展开，主体区域悬停不触发 -->
 		<div
-			class="panel-wrap"
-			@mouseenter="!pinned && (panelOpen = true)"
-			@mouseleave="panelOpen = false">
-			<div class="panel-hotzone" />
-			<div class="opacity-panel" :class="{ open: panelOpen }">
-				<span class="opacity-label">透明度</span>
-				<el-slider
-					v-model="opacity"
-					class="opacity-slider"
-					tooltip-class="app-tip"
-					:min="0"
-					:max="1"
-					:step="0.05"
-					size="small"
-					@input="onOpacityChange" />
-			</div>
-		</div>
+			class="widget-root dark"
+			:class="{ pinned }"
+			:style="styleVars"
+			@pointerdown="onDragStart"
+			@contextmenu="onContextMenu">
+			<teleport to="body">
+				<div
+					v-if="devMenuVisible"
+					class="dev-context-menu"
+					:style="{
+						left: devMenuPos.x + 'px',
+						top: devMenuPos.y + 'px',
+					}"
+					@contextmenu.stop.prevent>
+					<div class="dev-menu-item" @click="handleOpenDevTools">
+						检查元素
+					</div>
+				</div>
+			</teleport>
+			<div class="widget-body">
+				<div class="widget-toolbar">
+					<div class="opacity-control">
+						<el-tooltip
+							content="调整背景透明度"
+							placement="top"
+							popper-class="app-tip widget-opacity-tip">
+							<el-slider
+								v-model="opacity"
+								class="opacity-slider"
+								tooltip-class="app-tip widget-opacity-tip"
+								:min="0"
+								:max="1"
+								:step="0.05"
+								placement="top"
+								size="small"
+								@input="onOpacityChange" />
+						</el-tooltip>
+					</div>
+					<div class="info-actions">
+						<el-tooltip
+							:content="
+								pinned
+									? '已固定（在托盘菜单取消固定）'
+									: '固定挂件（鼠标穿透）'
+							"
+							placement="top"
+							popper-class="app-tip widget-control-tip">
+							<button
+								class="icon-btn"
+								:class="{ 'is-active': pinned }"
+								@click="togglePin">
+								<el-icon
+									><Lock v-if="pinned" /><Unlock v-else
+								/></el-icon>
+							</button>
+						</el-tooltip>
+						<el-tooltip
+							content="复制网络信息"
+							placement="top"
+							popper-class="app-tip widget-control-tip">
+							<button class="icon-btn" @click="copyInfo">
+								<el-icon><DocumentCopy /></el-icon>
+							</button>
+						</el-tooltip>
+						<el-tooltip
+							content="打开主窗口"
+							placement="top"
+							popper-class="app-tip widget-control-tip">
+							<button class="icon-btn" @click="openMain">
+								⤢
+							</button>
+						</el-tooltip>
+					</div>
+				</div>
 
-		<div class="widget-body">
-			<div class="info" v-if="adapter">
-				<div class="info-row">
-					<span class="info-label">获取方式</span>
+				<div v-if="adapter" class="status-summary">
+					<span class="summary-label">状态</span>
 					<el-tag
 						v-if="adapter.dhcp_enabled"
 						type="success"
@@ -578,156 +651,192 @@ async function openMain() {
 						class="tag-static"
 						>静态</el-tag
 					>
-					<span class="info-actions">
-						<el-tooltip
-							:content="
-								pinned
-									? '已固定（在托盘菜单取消固定）'
-									: '固定挂件（鼠标穿透）'
+					<div class="summary-metrics">
+						<el-tag
+							class="status-tag"
+							:class="
+								adapter.status === 'connected'
+									? 'status-on'
+									: 'status-off'
 							"
-							placement="top"
-							popper-class="app-tip">
-							<button
-								class="icon-btn"
-								:class="{ 'is-active': pinned }"
-								@click="togglePin">
-								<el-icon
-									><Lock v-if="pinned" /><Unlock v-else
-								/></el-icon>
-							</button>
-						</el-tooltip>
-						<el-tooltip
-							content="复制网络信息"
-							placement="top"
-							popper-class="app-tip">
-							<button class="icon-btn" @click="copyInfo">
-								<el-icon><DocumentCopy /></el-icon>
-							</button>
-						</el-tooltip>
-						<el-tooltip
-							content="打开主窗口"
-							placement="top"
-							popper-class="app-tip">
-							<button class="icon-btn" @click="openMain">
-								⤢
-							</button>
-						</el-tooltip>
-					</span>
+							size="small">
+							<el-icon
+								><Connection
+									v-if="
+										adapter.status === 'connected'
+									" /><Link v-else
+							/></el-icon>
+							<span>{{
+								adapter.status === 'connected'
+									? '已连接'
+									: '未连接'
+							}}</span>
+						</el-tag>
+						<div class="speed-row">
+							<el-icon><Odometer /></el-icon>
+							<span>{{ adapter.link_speed || '-' }}</span>
+						</div>
+					</div>
 				</div>
-				<div class="info-row">
-					<span class="info-label">IPv4 地址</span>
-					<span class="info-value">{{
-						adapter.ipv4.join('、') || '-'
-					}}</span>
+
+				<div v-if="adapter" class="detail-grid">
+					<div class="info-list">
+						<div class="info-row">
+							<span class="info-label">IPv4</span
+							><span>{{ adapter.ipv4.join('、') || '-' }}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">掩码</span
+							><span>{{
+								adapter.subnet_mask.join('、') || '-'
+							}}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">网关</span
+							><span>{{ adapter.gateway || '-' }}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">主DNS</span
+							><span>{{ adapter.dns[0] || '-' }}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">备DNS</span
+							><span>{{ adapter.dns[1] || '-' }}</span>
+						</div>
+					</div>
+					<div class="traffic-panel">
+						<div
+							class="traffic-metric traffic-up"
+							:title="`上行 ${formatTrafficRate(uploadRate)}`">
+							<span class="traffic-label"
+								><el-icon><Top /></el-icon>上行</span
+							>
+							<strong>{{ formatTrafficRate(uploadRate) }}</strong>
+						</div>
+						<div
+							class="traffic-metric traffic-down"
+							:title="`下行 ${formatTrafficRate(downloadRate)}`">
+							<span class="traffic-label"
+								><el-icon><Bottom /></el-icon>下行</span
+							>
+							<strong>{{
+								formatTrafficRate(downloadRate)
+							}}</strong>
+						</div>
+					</div>
 				</div>
-				<div class="info-row">
-					<span class="info-label">子网掩码</span>
-					<span>{{ adapter.subnet_mask.join('、') || '-' }}</span>
+				<div class="info-row info-empty" v-if="!adapter">
+					<span class="muted">未检测到可用网卡</span>
+					<el-tooltip
+						content="打开主窗口"
+						placement="top"
+						popper-class="app-tip">
+						<button class="icon-btn" @click="openMain">⤢</button>
+					</el-tooltip>
 				</div>
-				<div class="info-row">
-					<span class="info-label">默认网关</span>
-					<span>{{ adapter.gateway || '-' }}</span>
+				<div class="actions" role="group" aria-label="IP 获取方式">
+					<el-button
+						size="small"
+						:class="{ 'is-current': adapter?.dhcp_enabled }"
+						:loading="applying === 'dhcp'"
+						:disabled="!adapter"
+						@click="applyDhcpNow">
+						DHCP
+					</el-button>
+					<el-button
+						size="small"
+						:class="{
+							'is-current': adapter && !adapter.dhcp_enabled,
+						}"
+						:loading="applying === 'static'"
+						:disabled="!adapter"
+						@click="applyStaticNow">
+						固定IP
+					</el-button>
 				</div>
-				<div class="info-row">
-					<span class="info-label">首选DNS</span>
-					<span>{{ adapter.dns[0] || '-' }}</span>
-				</div>
-				<div class="info-row">
-					<span class="info-label">备用DNS</span>
-					<span>{{ adapter.dns[1] || '-' }}</span>
-				</div>
-				<div class="status-col">
-					<el-tag
-						class="status-tag"
-						:class="
-							adapter.status === 'connected'
-								? 'status-on'
-								: 'status-off'
+
+				<div class="adapter-picker">
+					<button
+						type="button"
+						class="adapter-trigger"
+						:class="{ 'is-open': selectOpen }"
+						:aria-expanded="selectOpen"
+						aria-haspopup="listbox"
+						:title="
+							adapter
+								? `${adapter.name}（${adapter.description}）`
+								: '选择网卡'
 						"
-						size="small">
-						<el-icon
-							><Connection
-								v-if="adapter.status === 'connected'" /><Link
-								v-else
-						/></el-icon>
-						<span>{{
-							adapter.status === 'connected' ? '已连接' : '未连接'
+						@click="selectOpen = !selectOpen">
+						<span class="adapter-current">{{
+							adapter
+								? `${adapter.name}（${adapter.description}）`
+								: '选择网卡'
 						}}</span>
-					</el-tag>
-					<div class="speed-row">
-						<el-icon><Odometer /></el-icon>
-						<span>{{ adapter.link_speed || '-' }}</span>
+						<el-icon
+							class="adapter-arrow"
+							:class="{ 'is-open': selectOpen }"
+							><ArrowDown
+						/></el-icon>
+					</button>
+					<div
+						v-if="selectOpen"
+						class="adapter-menu"
+						role="listbox"
+						aria-label="选择网卡">
+						<button
+							v-for="a in adapters"
+							:key="a.name"
+							type="button"
+							class="adapter-option"
+							:class="{ 'is-selected': a.name === currentName }"
+							role="option"
+							:aria-selected="a.name === currentName"
+							:title="`${a.name}（${a.description}）`"
+							@click="chooseAdapter(a.name)">
+							<span class="adapter-option-copy"
+								><strong>{{ a.name }}</strong
+								><small>{{ a.description }}</small></span
+							>
+							<el-icon
+								v-if="a.name === currentName"
+								class="adapter-option-check"
+								><Check
+							/></el-icon>
+						</button>
+						<div v-if="!adapters.length" class="adapter-empty">
+							未检测到可用网卡
+						</div>
 					</div>
 				</div>
 			</div>
-			<div class="info-row info-empty" v-else>
-				<span class="muted">未检测到可用网卡</span>
-				<el-tooltip
-					content="打开主窗口"
-					placement="top"
-					popper-class="app-tip">
-					<button class="icon-btn" @click="openMain">⤢</button>
-				</el-tooltip>
-			</div>
 
-			<div class="actions">
-				<el-button
-					size="small"
-					:loading="applying === 'dhcp'"
-					:disabled="!adapter"
-					@click="applyDhcpNow">
-					DHCP
-				</el-button>
-				<el-button
-					size="small"
-					type="primary"
-					:loading="applying === 'static'"
-					:disabled="!adapter"
-					@click="applyStaticNow">
-					固定IP
-				</el-button>
-			</div>
+			<!-- 边缘缩放热区：仅东侧横向拉宽，高度固定默认值 -->
+			<div
+				class="resize-edge resize-e"
+				@pointerdown="onResizeStart($event)" />
 
-			<el-select
-				v-model="currentName"
-				size="small"
-				class="adapter-select"
-				popper-class="widget-select-popper"
-				placement="bottom-start"
-				:fallback-placements="['bottom-start']"
-				placeholder="选择网卡"
-				@visible-change="onSelectVisible">
-				<el-option
-					v-for="a in adapters"
-					:key="a.name"
-					:label="`${a.name}（${a.description}）`"
-					:value="a.name" />
-			</el-select>
-		</div>
-
-		<!-- 边缘缩放热区：仅东侧横向拉宽，高度固定默认值 -->
-		<div
-			class="resize-edge resize-e"
-			@pointerdown="onResizeStart($event)" />
-
-		<!-- 暂无固定 IP 方案：组件内定位浮层，不进文档流、不撑大窗口 -->
-		<div v-if="showNoProfile" class="np-mask" @click.self="closeNoProfile">
-			<div class="np-card">
-				<div class="np-body">
-					<el-icon class="np-icon"><WarningFilled /></el-icon>
-					<span>暂无固定IP方案，请在主窗口配置后保存</span>
-				</div>
-				<div class="np-actions">
-					<el-button
-						size="small"
-						type="primary"
-						@click="closeNoProfile"
-						>确定</el-button
-					>
+			<!-- 暂无固定 IP 方案：组件内定位浮层，不进文档流、不撑大窗口 -->
+			<div
+				v-if="showNoProfile"
+				class="np-mask"
+				@click.self="closeNoProfile">
+				<div class="np-card">
+					<div class="np-body">
+						<el-icon class="np-icon"><WarningFilled /></el-icon>
+						<span>暂无固定IP方案，请在主窗口配置后保存</span>
+					</div>
+					<div class="np-actions">
+						<el-button
+							size="small"
+							type="primary"
+							@click="closeNoProfile"
+							>确定</el-button
+						>
+					</div>
 				</div>
 			</div>
 		</div>
-	</div>
 	</el-config-provider>
 </template>
 
@@ -738,21 +847,36 @@ async function openMain() {
 	display: flex;
 	flex-direction: column;
 	/* 背景与边框透明度跟随全局背景 alpha，字体保持不透明 */
-	background: rgba(18, 19, 23, var(--widget-bg-alpha, 0.92));
+	background:
+		linear-gradient(
+			135deg,
+			rgba(76, 141, 255, var(--select-bg-alpha, 0.06)),
+			transparent 48%
+		),
+		rgba(18, 19, 23, var(--widget-bg-alpha, 0.92));
 	border: 1px solid rgba(255, 255, 255, var(--root-border-alpha, 0.12));
-	border-radius: var(--radius-sm);
+	border-radius: 10px;
 	overflow: hidden;
-	font-size: 12px;
+	font-size: 10px;
+	font-family:
+		'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+	font-synthesis: none;
 	position: relative;
 	color: #e6e8eb;
+}
+
+.widget-root :deep(.el-button),
+.widget-root :deep(.el-tag),
+.widget-root :deep(.el-slider) {
+	font-family: inherit;
 }
 
 .widget-body {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
-	gap: 3px;
-	padding: 8px 8px 8px;
+	gap: 6px;
+	padding: 6px 5px;
 	min-height: 0;
 }
 
@@ -760,26 +884,149 @@ async function openMain() {
 	justify-content: space-between;
 }
 
-.adapter-select {
+.widget-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.adapter-picker {
+	position: relative;
+	flex: 0 0 auto;
+	width: 100%;
+	min-width: 0;
+}
+
+.adapter-picker::before {
+	content: '';
+	position: absolute;
+	left: 7px;
+	right: 7px;
+	top: -4px;
+	height: 1px;
+	background: rgba(255, 255, 255, 0.18);
+	pointer-events: none;
+}
+
+.adapter-trigger {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	height: 28px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 9px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	background: transparent;
+	color: #e6e8eb;
+	font: inherit;
+	font-size: 10px;
+	text-align: left;
+	cursor: pointer;
+	transition:
+		border-color 0.16s ease,
+		background 0.16s ease;
+}
+.adapter-trigger:hover,
+.adapter-trigger.is-open {
+	border-color: transparent;
+	background: transparent;
+	color: #8db6ff;
+}
+.adapter-trigger:hover .adapter-arrow,
+.adapter-trigger.is-open .adapter-arrow {
+	color: #8db6ff;
+}
+.adapter-current {
 	flex: 1;
 	min-width: 0;
-	margin-top: 2px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
-
-/* 压缩挂件内 el-select 输入框，背景/边框跟随全局透明度 */
-.adapter-select :deep(.el-select__wrapper) {
-	min-height: 26px;
-	padding: 0 8px;
+.adapter-arrow {
+	flex: 0 0 auto;
+	color: #9aa3b1;
 	font-size: 10px;
-	background: rgba(255, 255, 255, var(--select-bg-alpha, 0.06));
-	box-shadow: 0 0 0 1px rgba(255, 255, 255, var(--select-border-alpha, 0.14))
-		inset;
+	transition: transform 0.16s ease;
 }
-
-.adapter-select :deep(.el-select__selected-item),
-.adapter-select :deep(.el-select__placeholder) {
+.adapter-arrow.is-open {
+	transform: rotate(180deg);
+}
+.adapter-menu {
+	position: absolute;
+	z-index: 25;
+	left: 0;
+	right: 0;
+	top: 34px;
+	bottom: auto;
+	max-height: 180px;
+	padding: 4px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	border-radius: 10px;
+	background: transparent;
+	box-shadow: none;
+}
+.adapter-option {
+	box-sizing: border-box;
+	width: 100%;
+	height: 38px;
+	min-height: 38px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 3px 7px;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: #dce1e9;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.adapter-option:hover {
+	background: rgba(255, 255, 255, 0.07);
+}
+.adapter-option.is-selected {
+	background: rgba(76, 141, 255, 0.16);
+	color: #8db6ff;
+}
+.adapter-option-copy {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+.adapter-option-copy strong,
+.adapter-option-copy small {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.adapter-option-copy strong {
 	font-size: 10px;
-	color: #e6e8eb;
+	font-weight: 600;
+}
+.adapter-option-copy small {
+	color: #929baa;
+	font-size: 9px;
+}
+.adapter-option-check {
+	flex: 0 0 auto;
+	color: #4c8dff;
+	font-size: 11px;
+}
+.adapter-empty {
+	padding: 10px 8px;
+	color: #929baa;
+	font-size: 10px;
+	text-align: center;
 }
 
 .icon-btn {
@@ -792,7 +1039,7 @@ async function openMain() {
 	background: transparent;
 	color: #c3c8cf;
 	cursor: pointer;
-	font-size: 14px;
+	font-size: 13px;
 	line-height: 1;
 	padding: 4px 5px;
 	border-radius: 4px;
@@ -808,79 +1055,184 @@ async function openMain() {
 	background: rgba(76, 141, 255, 0.22);
 }
 
-.info {
-	position: relative;
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	font-size: 11px;
-	cursor: default;
-	user-select: none;
-	-webkit-user-select: none;
-}
-
 .info-actions {
-	margin-left: auto;
+	flex: 0 0 auto;
 	display: flex;
 	align-items: center;
-	gap: 2px;
-}
-
-.info-actions .el-icon {
-	font-size: 13px;
+	gap: 4px;
+	margin-left: auto;
+	white-space: nowrap;
 }
 
 .info-actions .icon-btn {
 	margin-left: 0;
 }
 
+.opacity-control {
+	box-sizing: border-box;
+	flex: 0 0 100px;
+	width: 100px;
+	min-width: 0;
+	/* 最小值时滑块手柄中心与“状态”两字的中心落在同一竖线上 */
+	margin-left: 15px;
+	padding: 0;
+}
+
+.status-summary {
+	box-sizing: border-box;
+	position: relative;
+	min-height: 28px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 1px 7px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	background: transparent;
+	font-size: 10px;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+/* 即使背景调至全透，底部分隔线仍标识状态区与网络信息区的边界 */
+.status-summary::after {
+	content: '';
+	position: absolute;
+	left: 7px;
+	right: 7px;
+	bottom: 0;
+	height: 1px;
+	background: rgba(255, 255, 255, 0.18);
+	pointer-events: none;
+}
+
+.summary-label {
+	flex: 0 0 auto;
+	color: #9199a6;
+	font-size: 9px;
+	letter-spacing: 0.01em;
+}
+
+.status-summary .el-tag {
+	box-sizing: border-box;
+	height: 19px;
+	line-height: 17px;
+	padding: 0 5px;
+	font-size: 9px;
+}
+
+.summary-metrics {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.info-list {
+	box-sizing: border-box;
+	min-width: 0;
+	padding: 6px 7px 6px 8px;
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	gap: 2px;
+	font-size: 10px;
+	cursor: default;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.detail-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(70px, 0.68fr);
+	align-items: stretch;
+	gap: 8px;
+	min-height: 72px;
+}
+
 .info-row {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 5px;
 	line-height: 1.35;
 }
 
 .info-label {
-	width: 56px;
+	width: 36px;
 	flex-shrink: 0;
-	color: #9aa0a8;
+	color: #9199a6;
+	font-size: 9px;
+	letter-spacing: 0.01em;
+}
+
+.info-row > span:not(.info-label) {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: #e6e8eb;
+	font-variant-numeric: tabular-nums;
+}
+
+.traffic-panel {
+	box-sizing: border-box;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 14px;
+	padding: 6px 0 6px 10px;
+	border-left: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.traffic-metric {
+	min-width: 0;
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+.traffic-label {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 3px;
+	color: #9aa3b1;
+	font-size: 9px;
+}
+
+.traffic-label .el-icon {
 	font-size: 10px;
 }
 
-.info-value {
-	font-size: 11px;
-	font-weight: 400;
-	color: #f2f4f7;
-	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+.traffic-metric strong {
+	width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 10px;
+	font-weight: 500;
+	text-align: center;
 }
 
-.info .info-row > span:not(.info-label):not(.info-value) {
-	color: #e6e8eb;
-	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+.traffic-up .traffic-label .el-icon,
+.traffic-up strong {
+	color: #78aaff;
 }
 
-.info .el-tag {
-	height: 18px;
-	line-height: 16px;
-	padding: 0 6px;
-	font-size: 11px;
+.traffic-down .traffic-label .el-icon,
+.traffic-down strong {
+	color: #4adea0;
 }
 
-/* 右侧状态列：链路状态在上、链路速率在下，整体垂直居中，两行左对齐 */
-.info .status-col {
-	position: absolute;
-	right: 1%;
-	top: 60%;
-	transform: translateY(-50%);
-	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
-	gap: 15px;
-}
-
-/* 链路状态标签：图标与文字同一行，无底色无边框 */
-.info .status-tag {
+/* 状态信息与操作栏保持同一字体体系 */
+.status-summary .status-tag {
 	display: inline-flex;
 	align-items: center;
 	height: auto;
@@ -891,154 +1243,166 @@ async function openMain() {
 	box-shadow: none !important;
 }
 /* el-tag 内层 content：图标与文字横向同行 */
-.info .status-tag :deep(.el-tag__content) {
+.status-summary .status-tag :deep(.el-tag__content) {
 	display: inline-flex;
 	flex-direction: row;
 	align-items: center;
 	gap: 4px;
 }
-.info .status-tag.status-on :deep(.el-tag__content) {
+.status-summary .status-tag.status-on :deep(.el-tag__content) {
 	color: #4ade80 !important;
 }
-.info .status-tag.status-off :deep(.el-tag__content) {
+.status-summary .status-tag.status-off :deep(.el-tag__content) {
 	color: #f56c6c !important;
 }
-.info .status-tag .el-icon {
+.status-summary .status-tag .el-icon {
 	width: 14px;
 	flex-shrink: 0;
-	font-size: 12px;
+	font-size: 11px;
 }
 
 /* 链路速率行：图标 + 文字同行，橙红色标识 */
-.info .speed-row {
+.summary-metrics .speed-row {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
 	font-size: 10px;
-	color: #f77234;
+	color: #ffad66;
 }
-.info .speed-row .el-icon {
+.summary-metrics .speed-row .el-icon {
 	width: 14px;
 	flex-shrink: 0;
-	font-size: 12px;
-	color: #f77234;
+	font-size: 11px;
+	color: #ffad66;
 }
 
 /* DHCP 标签：与主窗一致的亮绿配色（:deep 强制覆盖 element 内部变量） */
-.info :deep(.tag-dhcp) {
+.status-summary :deep(.tag-dhcp) {
 	background: rgba(74, 222, 128, 0.18) !important;
 	border-color: rgba(74, 222, 128, 0.45) !important;
 	color: #4ade80 !important;
 }
 
-.info :deep(.tag-static) {
+.status-summary :deep(.tag-static) {
 	background: rgba(245, 108, 108, 0.16) !important;
 	border-color: rgba(245, 108, 108, 0.4) !important;
 	color: #f56c6c !important;
 }
 
 .actions {
-	display: flex;
-	gap: 8px;
-	margin-top: 2px;
-	justify-content: space-between;
+	position: relative;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+	margin-top: 0;
+	padding: 0 4px;
+}
+
+.actions::before {
+	content: '';
+	position: absolute;
+	left: 7px;
+	right: 7px;
+	top: -4px;
+	height: 1px;
+	background: rgba(255, 255, 255, 0.18);
+	pointer-events: none;
 }
 
 .actions .el-button {
-	flex: 0 0 auto;
-	width: 72px;
-	min-height: 24px;
-	padding: 3px 5px;
-	font-size: 10.5px;
-	transition:
-		background 0.15s ease,
-		border-color 0.15s ease,
-		color 0.15s ease;
-}
-
-/* 按钮背景跟随全局透明度；边框保留最低可见度，全透明时仍可辨识 */
-.actions .el-button:not(.el-button--primary) {
-	background: rgba(255, 255, 255, var(--btn-bg-alpha, 0.06));
-	border-color: rgba(255, 255, 255, var(--btn-border-alpha, 0.18));
-	color: #e6e8eb;
-}
-
-.actions .el-button:not(.el-button--primary):hover:not(:disabled) {
-	background: rgba(255, 255, 255, 0.14);
-	border-color: rgba(255, 255, 255, 0.32);
-	color: #ffffff;
-}
-
-.actions .el-button--primary {
-	background: rgba(76, 141, 255, var(--primary-bg-alpha, 0.9));
-	border-color: rgba(76, 141, 255, var(--primary-border-alpha, 0.45));
-}
-
-.actions .el-button--primary:hover:not(:disabled) {
-	background: rgba(76, 141, 255, 1);
-	border-color: rgba(76, 141, 255, 0.7);
-}
-
-/* 顶部边缘热区：仅这条窄条悬停才展开面板，主体区域不触发 */
-.panel-wrap {
+	position: relative;
 	width: 100%;
-	flex-shrink: 0;
+	height: 29px;
+	min-height: 29px;
+	margin: 0;
+	padding: 2px 8px 3px;
+	border: 0;
+	border-bottom: 0;
+	background: transparent !important;
+	box-shadow: none !important;
+	color: #aeb6c2;
+	font-size: 10px;
+	font-weight: 600;
+	border-radius: 0;
+	transition: color 0.15s ease;
 }
 
-.panel-hotzone {
-	width: 100%;
-	height: 8px;
+.actions .el-button.is-current {
+	color: #78aaff;
 }
 
-/* 顶部透明度面板：文档流内占顶部一行，展开时随窗口上移探出；增高部分被面板占用，底部不堆空白 */
-.opacity-panel {
-	z-index: 50;
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	height: 0;
-	padding: 0 8px;
-	background: rgba(18, 19, 23, var(--widget-bg-alpha, 0.92));
-	border-bottom: 1px solid rgba(255, 255, 255, var(--panel-border-alpha, 0.1));
-	opacity: 0;
-	transition:
-		height 0.18s ease,
-		opacity 0.18s ease,
-		padding 0.18s ease;
-	overflow: hidden;
-	flex-shrink: 0;
+.actions .el-button.is-current::after {
+	content: '';
+	position: absolute;
+	left: 18%;
+	right: 18%;
+	bottom: 0;
+	height: 2px;
+	border-radius: 999px;
+	background: linear-gradient(
+		90deg,
+		rgba(76, 141, 255, 0),
+		#4c8dff 24%,
+		#4c8dff 76%,
+		rgba(76, 141, 255, 0)
+	);
 }
 
-.opacity-panel.open {
-	height: 34px;
-	padding: 6px 8px;
-	opacity: 1;
+.actions .el-button:not(.is-current):hover:not(:disabled) {
+	color: #fff;
 }
 
-.opacity-label {
-	flex-shrink: 0;
-	width: 44px;
-	color: #9aa0a8;
-	font-size: 12px;
+.actions .el-button.is-current:hover:not(:disabled) {
+	color: #a9c9ff;
+}
+
+.actions .el-button:disabled {
+	color: #78808d;
+	opacity: 0.65;
 }
 
 .opacity-slider {
-	flex: 1;
+	width: 100%;
 	margin: 0;
 }
 
-/* 调细滑块轨道与手柄 */
+/* 透明度范围以渐变呈现；手柄以低幅呼吸光提示可调 */
 .opacity-slider :deep(.el-slider__runway) {
-	height: 3px;
+	height: 1px;
+	border-radius: 999px;
+	background: linear-gradient(
+		90deg,
+		rgba(255, 255, 255, 0.08),
+		#d9e7ff
+	) !important;
 }
 
 .opacity-slider :deep(.el-slider__bar) {
-	height: 3px;
+	height: 1px;
+	background: transparent !important;
 }
 
 .opacity-slider :deep(.el-slider__button) {
-	width: 10px;
-	height: 10px;
+	width: 8px;
+	height: 8px;
+	border: 2px solid #8db6ff;
+	background: #eaf2ff;
+	box-shadow: 0 0 0 2px rgba(76, 141, 255, 0.16);
+	animation: opacity-handle-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes opacity-handle-pulse {
+	0%,
+	100% {
+		box-shadow:
+			0 0 0 2px rgba(76, 141, 255, 0.14),
+			0 0 5px rgba(76, 141, 255, 0.22);
+	}
+	50% {
+		box-shadow:
+			0 0 0 4px rgba(76, 141, 255, 0.22),
+			0 0 10px rgba(76, 141, 255, 0.42);
+	}
 }
 
 /* 边缘缩放热区 */
@@ -1060,7 +1424,7 @@ async function openMain() {
 }
 </style>
 
-<!-- 下拉弹层挂在 body 下，背景透明度由 JS 写入 --popper-alpha，选项紧凑且长名称换行完整 -->
+<!-- 全局 WebView 细节与提示框样式 -->
 <style>
 /* 隐藏 WebView2 / 浏览器默认的调整大小手柄，边缘拖拽缩放仍保留 */
 ::-webkit-resizer {
@@ -1069,69 +1433,16 @@ async function openMain() {
 /* 挂件内 ElMessage 提示整体缩小 */
 .el-message {
 	padding: 6px 12px;
-	font-size: 11px;
+	font-size: 10px;
 	border-radius: 6px;
 }
 .el-message .el-message__content {
-	font-size: 11px;
+	font-size: 10px;
 }
 .el-message .el-message__icon {
-	font-size: 13px;
+	font-size: 12px;
 	margin-right: 5px;
 }
-.widget-select-popper {
-	width: 224px;
-	min-width: 0;
-	padding: 4px 4px;
-	background: rgba(18, 19, 23, var(--popper-alpha, 0.92)) !important;
-	/* 去掉浮层外框、投影与圆角，视觉上作为组件内部列表展开 */
-	border: none !important;
-	box-shadow: none !important;
-	border-radius: 0 !important;
-}
-/* 选项超出最大高度时在列表内部滚动 */
-.widget-select-popper .el-scrollbar {
-	max-height: 240px;
-}
-/* 隐藏浮层小三角，避免露出独立弹层痕迹 */
-.widget-select-popper .el-popper__arrow,
-.widget-select-popper .el-select-dropdown__arrow {
-	display: none !important;
-}
-.widget-select-popper .el-scrollbar__wrap {
-	overflow-y: auto;
-}
-/* 左右留白由列表容器提供，避免选项外边距被滚动容器裁掉、右侧圆角丢失 */
-.widget-select-popper .el-select-dropdown__list {
-	padding: 2px 4px;
-}
-.widget-select-popper .el-select-dropdown__item {
-	height: auto;
-	min-height: 18px;
-	width: auto;
-	line-height: 1.2;
-	font-size: 9px;
-	padding: 4px; /* 内边距 */
-	margin: 5px 5px 3px 0; /* 外边距：上 右 下 左（增大右外边距以露出右侧圆角，调小左外边距） */
-	border-radius: 5px;
-	white-space: normal;
-	word-break: break-word;
-	overflow: visible;
-	color: #e6e8eb;
-}
-.widget-select-popper .el-select-dropdown__item > span {
-	white-space: normal;
-	word-break: break-word;
-}
-.widget-select-popper .el-select-dropdown__item.is-hovering,
-.widget-select-popper .el-select-dropdown__item:hover {
-	background: rgba(76, 141, 255, 0.16);
-}
-.widget-select-popper .el-select-dropdown__item.is-selected {
-	color: #4c8dff;
-	background: rgba(76, 141, 255, 0.22);
-}
-
 /* 暂无方案提示：组件内绝对定位浮层，居中于挂件，不参与文档流 */
 .np-mask {
 	position: absolute;
@@ -1148,7 +1459,7 @@ async function openMain() {
 	padding: 9px;
 	border-radius: 7px;
 	background: #26282f;
-	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+	box-shadow: none;
 	user-select: none;
 	-webkit-user-select: none;
 }
@@ -1156,13 +1467,13 @@ async function openMain() {
 	display: flex;
 	align-items: flex-start;
 	gap: 5px;
-	font-size: 10.5px;
+	font-size: 9.5px;
 	line-height: 1.35;
 	color: #c3c8cf;
 }
 .np-icon {
 	flex-shrink: 0;
-	font-size: 13px;
+	font-size: 12px;
 	color: #e6a23c;
 	margin-top: 1px;
 }
@@ -1172,8 +1483,8 @@ async function openMain() {
 	padding-top: 6px;
 }
 .np-actions .el-button {
-	min-height: 18px;
+	min-height: 16px;
 	padding: 1px 8px;
-	font-size: 10px;
+	font-size: 9px;
 }
 </style>

@@ -72,4 +72,20 @@ pub struct AppConfig {
     /// 界面主题：light / dark，缺省按深色处理
     #[serde(default)]
     pub theme: Option<String>,
+    /// Previously responsive hosts, used to distinguish offline from never discovered.
+    #[serde(default)]
+    pub host_history: Vec<HostHistory>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostHistory {
+    pub adapter: String,
+    pub network: String,
+    pub ip: String,
+    pub last_seen: u64,
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub mac: Option<String>,
+}
+

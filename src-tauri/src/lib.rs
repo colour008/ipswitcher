@@ -6,6 +6,7 @@ mod encoding;
 mod netcfg;
 mod process;
 mod shortcut;
+mod scanner;
 mod types;
 
 use config::{load_config, save_config};
@@ -27,7 +28,7 @@ const WIDGET_OPACITY_MIN: f64 = 0.0;
 const WIDGET_OPACITY_MAX: f64 = 1.0;
 const WIDGET_WIDTH_MIN: f64 = 240.0;
 /// 挂件固定默认高度，不随纵向缩放改变
-const WIDGET_HEIGHT_DEFAULT: f64 = 194.0;
+const WIDGET_HEIGHT_DEFAULT: f64 = 246.0;
 
 /// 应用挂件窗口持久化的尺寸（背景透明度由前端 CSS 控制，字体保持不透明）
 fn restore_widget_state(app: &AppHandle) {
@@ -318,6 +319,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             netcfg::list_adapters,
+            netcfg::get_adapter_traffic,
             netcfg::apply_static,
             netcfg::apply_dhcp,
             netcfg::apply_dns,
@@ -326,6 +328,8 @@ pub fn run() {
             netcfg::rename_adapter,
             diag::run_diagnostic,
             diag::stop_diagnostic,
+            scanner::run_host_scan,
+            scanner::stop_host_scan,
             elevate::elevate_action,
             get_config,
             save_config_cmd,
