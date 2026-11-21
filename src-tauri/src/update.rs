@@ -354,7 +354,7 @@ fn find_exe(dir: &Path) -> Result<PathBuf, String> {
     Err("更新包内未找到主程序".to_string())
 }
 
-/// 生成退出后执行替换的 PowerShell 辅助脚本（UTF-8 BOM，路径全部经参数传入）
+/// 生成退出后执行替换的 PowerShell 辅助脚本（UTF-8 BOM，路径全部经参数传入；兼容 Windows PowerShell 5.1）
 fn write_helper_ps1(path: &Path, clean_extract: bool) -> Result<(), String> {
     let extract_cleanup = if clean_extract {
         r#"
@@ -373,19 +373,50 @@ if ($ExtractDir -and (Test-Path -LiteralPath $ExtractDir)) {
     [string]$ExtractDir
 )
 $ErrorActionPreference = 'Stop'
+$TargetDir = Split-Path -Parent $TargetExe
+$LogPath = Join-Path $env:TEMP 'ipswitcher-update\update-helper.log'
+
+function Write-Log($msg) {{
+    try {{
+        $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $msg
+        Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+    }} catch {{}}
+}}
+
 while (Get-Process -Id $OldPid -ErrorAction SilentlyContinue) {{
     Start-Sleep -Milliseconds 300
 }}
+
+# 第一步：替换主程序。复制失败才回滚备份并提示更新失败
+$replaced = $false
 try {{
     Copy-Item -LiteralPath $NewExe -Destination $TargetExe -Force
-    Start-Process -LiteralPath $TargetExe
+    $replaced = $true
+    Write-Log 'copy ok'
 }} catch {{
+    Write-Log ('copy failed: ' + $_.Exception.Message)
     if ((Test-Path -LiteralPath $Backup) -and -not (Test-Path -LiteralPath $TargetExe)) {{
         Copy-Item -LiteralPath $Backup -Destination $TargetExe -Force
     }}
     Add-Type -AssemblyName System.Windows.Forms
-    [System.Windows.Forms.MessageBox]::Show('更新失败，已保留旧版本，请手动前往 Release 页面下载') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show('更新失败，未能替换主程序，请手动前往 Release 页面下载') | Out-Null
 }}
+
+# 第二步：复制成功后备份已无用，删除；再尝试重启，重启失败不回滚、不判为更新失败
+if ($replaced) {{
+    if (Test-Path -LiteralPath $Backup) {{
+        Remove-Item -LiteralPath $Backup -Force -ErrorAction SilentlyContinue
+    }}
+    try {{
+        Start-Process -FilePath $TargetExe -WorkingDirectory $TargetDir
+        Write-Log 'restart ok'
+    }} catch {{
+        Write-Log ('restart failed: ' + $_.Exception.Message)
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show('更新已完成，请手动启动 IPSwitcher') | Out-Null
+    }}
+}}
+
 Remove-Item -LiteralPath $NewExe -Force -ErrorAction SilentlyContinue
 {extract_cleanup}
 Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
@@ -441,6 +472,11 @@ pub async fn apply_update(
                 Some(dir) => find_exe(dir)?,
                 None => asset.clone(),
             };
+
+            // zip 形态解压完成后删除临时下载的压缩包；单文件形态由辅助脚本删除 NewExe
+            if is_zip {
+                let _ = fs::remove_file(&asset);
+            }
 
             // 备份当前主程序，便于替换失败时还原
             let backup = prog_dir.join("IPSwitcher.exe.bak");

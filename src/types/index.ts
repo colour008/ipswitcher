@@ -105,7 +105,7 @@ export interface UpdateInfo {
   hasUpdate: boolean;
   currentVersion: string;
   latestVersion: string;
-  /** Release Notes 正文，纯文本展示 */
+  /** Release Notes 正文（Markdown，前端渲染） */
   notes: string;
   /** 当前分发形态：installed / portable / standalone */
   flavor: string;
