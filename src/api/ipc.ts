@@ -61,6 +61,12 @@ export const onScanDone = (cb: (p: ScanDoneResult) => void) =>
 export const elevateAction = (action: PendingAction) =>
   invoke<void>("elevate_action", { action });
 
+/** 以管理员权限重启本程序；返回 false 表示当前已是管理员 */
+export const restartAsAdmin = () => invoke<boolean>("restart_as_admin");
+
+/** 启动时是否应弹出管理员权限询问 */
+export const shouldPromptAdmin = () => invoke<boolean>("should_prompt_admin");
+
 export const getConfig = () => invoke<AppConfig>("get_config");
 
 export const saveConfig = (config: AppConfig) =>

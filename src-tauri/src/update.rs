@@ -354,7 +354,9 @@ fn find_exe(dir: &Path) -> Result<PathBuf, String> {
     Err("更新包内未找到主程序".to_string())
 }
 
-/// 生成退出后执行替换的 PowerShell 辅助脚本（UTF-8 BOM，路径全部经参数传入；兼容 Windows PowerShell 5.1）
+/// 生成退出后执行替换的 PowerShell 辅助脚本（UTF-8 BOM，路径全部经参数传入；兼容 Windows PowerShell 5.1）。
+/// 替换策略：等待所有 IPSwitcher 进程退出 → 等待目标 exe 句柄释放 → 先重命名旧 exe 再放入新 exe
+/// （运行中映像可被重命名，规避直接覆盖占用）；失败按“权限不足 / 文件被占用”分类提示并回滚。
 fn write_helper_ps1(path: &Path, clean_extract: bool) -> Result<(), String> {
     let extract_cleanup = if clean_extract {
         r#"
@@ -374,6 +376,7 @@ if ($ExtractDir -and (Test-Path -LiteralPath $ExtractDir)) {
 )
 $ErrorActionPreference = 'Stop'
 $TargetDir = Split-Path -Parent $TargetExe
+$OldExe = Join-Path $TargetDir 'IPSwitcher.old.exe'
 $LogPath = Join-Path $env:TEMP 'ipswitcher-update\update-helper.log'
 
 function Write-Log($msg) {{
@@ -383,29 +386,75 @@ function Write-Log($msg) {{
     }} catch {{}}
 }}
 
-while (Get-Process -Id $OldPid -ErrorAction SilentlyContinue) {{
+# 判断目标文件是否仍被独占占用（能以 ReadWrite/None 共享打开即视为已释放）
+function Test-FileLocked($path) {{
+    if (-not (Test-Path -LiteralPath $path)) {{ return $false }}
+    try {{
+        $fs = [System.IO.File]::Open($path, 'Open', 'ReadWrite', 'None')
+        $fs.Close()
+        return $false
+    }} catch {{ return $true }}
+}}
+
+# 第一步：等待所有 IPSwitcher 实例退出（不仅是触发更新的 OldPid），最多 30 秒
+$waitDeadline = (Get-Date).AddSeconds(30)
+while ($true) {{
+    $procs = Get-Process -Name 'IPSwitcher' -ErrorAction SilentlyContinue
+    if (-not $procs) {{ break }}
+    if ((Get-Date) -gt $waitDeadline) {{
+        Write-Log 'wait timeout: another instance still running'
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show('更新失败：检测到 IPSwitcher 其他实例仍在运行，请全部关闭后重试') | Out-Null
+        exit 1
+    }}
     Start-Sleep -Milliseconds 300
 }}
 
-# 第一步：替换主程序。复制失败才回滚备份并提示更新失败
-$replaced = $false
-try {{
-    Copy-Item -LiteralPath $NewExe -Destination $TargetExe -Force
-    $replaced = $true
-    Write-Log 'copy ok'
-}} catch {{
-    Write-Log ('copy failed: ' + $_.Exception.Message)
-    if ((Test-Path -LiteralPath $Backup) -and -not (Test-Path -LiteralPath $TargetExe)) {{
-        Copy-Item -LiteralPath $Backup -Destination $TargetExe -Force
-    }}
-    Add-Type -AssemblyName System.Windows.Forms
-    [System.Windows.Forms.MessageBox]::Show('更新失败，未能替换主程序，请手动前往 Release 页面下载') | Out-Null
+# 第二步：等待目标 exe 文件句柄释放，最多 10 秒
+$lockDeadline = (Get-Date).AddSeconds(10)
+while ((Test-FileLocked $TargetExe) -and (Get-Date) -lt $lockDeadline) {{
+    Start-Sleep -Milliseconds 300
 }}
 
-# 第二步：复制成功后备份已无用，删除；再尝试重启，重启失败不回滚、不判为更新失败
+# 第三步：先重命名旧 exe（运行中映像允许重命名），再放入新 exe；失败回滚
+$replaced = $false
+try {{
+    if (Test-Path -LiteralPath $OldExe) {{
+        Remove-Item -LiteralPath $OldExe -Force -ErrorAction SilentlyContinue
+    }}
+    Move-Item -LiteralPath $TargetExe -Destination $OldExe -Force
+    Copy-Item -LiteralPath $NewExe -Destination $TargetExe -Force
+    $replaced = $true
+    Write-Log 'copy ok (rename fallback)'
+}} catch {{
+    Write-Log ('copy failed: ' + $_.Exception.Message)
+    # 主程序缺失时从旧 exe 或备份还原
+    if (-not (Test-Path -LiteralPath $TargetExe)) {{
+        $restore = if ((Test-Path -LiteralPath $OldExe)) {{ $OldExe }} else {{ $Backup }}
+        if ($restore -and (Test-Path -LiteralPath $restore)) {{
+            Copy-Item -LiteralPath $restore -Destination $TargetExe -Force -ErrorAction SilentlyContinue
+        }}
+    }}
+    Add-Type -AssemblyName System.Windows.Forms
+    $msg = $_.Exception.Message
+    if ($msg -match '拒绝访问|Access is denied|UnauthorizedAccess|being used by another process') {{
+        if ($msg -match '拒绝访问|Access is denied|UnauthorizedAccess') {{
+            [System.Windows.Forms.MessageBox]::Show('更新失败：程序目录需要管理员权限，请以管理员身份运行后重试，或将软件移出 Program Files 目录') | Out-Null
+        }} else {{
+            [System.Windows.Forms.MessageBox]::Show('更新失败：主程序仍被占用，请关闭其他 IPSwitcher 实例后手动前往 Release 页面下载') | Out-Null
+        }}
+    }} else {{
+        [System.Windows.Forms.MessageBox]::Show('更新失败：未能替换主程序，请手动前往 Release 页面下载') | Out-Null
+    }}
+}}
+
+# 第四步：复制成功后清理备份与旧 exe，再尝试重启；重启失败不回滚、不判为更新失败
 if ($replaced) {{
     if (Test-Path -LiteralPath $Backup) {{
         Remove-Item -LiteralPath $Backup -Force -ErrorAction SilentlyContinue
+    }}
+    if (Test-Path -LiteralPath $OldExe) {{
+        Remove-Item -LiteralPath $OldExe -Force -ErrorAction SilentlyContinue
     }}
     try {{
         Start-Process -FilePath $TargetExe -WorkingDirectory $TargetDir
@@ -448,10 +497,26 @@ pub async fn apply_update(
 
     match flavor {
         InstallFlavor::Installed => {
-            // 安装版：直接拉起 NSIS 安装器，随后退出主程序释放文件占用
-            let mut cmd = std::process::Command::new(&asset);
-            suppress_window(&mut cmd);
-            cmd.spawn().map_err(|e| format!("启动安装器失败：{e}"))?;
+            // 安装版：perMachine 安装器要求管理员权限，标准权限直接 CreateProcess 会报 740，
+            // 因此经 ShellExecute RunAs 触发 UAC 提权拉起；/S 静默安装、/R 装后自动启动新版。
+            // 随后退出主程序释放文件占用。
+            let setup_q = asset.to_string_lossy().replace('\'', "''");
+            let ps = format!(
+                "try {{ Start-Process -FilePath '{}' -ArgumentList '/S /R' -Verb RunAs }} catch {{ exit 1 }}",
+                setup_q
+            );
+            let mut child_cmd = std::process::Command::new("powershell");
+            child_cmd.args(["-NoProfile", "-Command", &ps]);
+            suppress_window(&mut child_cmd);
+            let mut child = child_cmd
+                .spawn()
+                .map_err(|e| format!("启动安装器失败：{e}"))?;
+            let status = child
+                .wait()
+                .map_err(|e| format!("启动安装器失败：{e}"))?;
+            if !status.success() {
+                return Err("更新已取消：未通过管理员权限授权".to_string());
+            }
             app.exit(0);
             Ok(())
         }

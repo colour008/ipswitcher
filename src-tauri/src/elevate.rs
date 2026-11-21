@@ -73,6 +73,43 @@ pub fn elevate_action(app: AppHandle, action: PendingAction) -> Result<(), Strin
     Ok(())
 }
 
+/// 以管理员权限重启本程序（无待决操作）。已是管理员时返回 Ok(false)，不重启；
+/// 成功发起提权后直接退出当前实例，避免标准权限与提权实例双开占用文件。
+/// 提权后的实例带 `--elevated-restart` 标记，不再重复弹询问。
+#[tauri::command]
+pub fn restart_as_admin() -> Result<bool, String> {
+    if crate::netcfg::is_admin() {
+        return Ok(false);
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("定位程序路径失败：{e}"))?;
+    let exe_q = exe.to_string_lossy().replace('\'', "''");
+    let ps = format!(
+        "Start-Process -FilePath '{}' -ArgumentList '--elevated-restart' -Verb RunAs",
+        exe_q
+    );
+    let mut child_cmd = std::process::Command::new("powershell");
+    child_cmd.args(["-NoProfile", "-Command", &ps]);
+    suppress_window(&mut child_cmd);
+    let mut child = child_cmd
+        .spawn()
+        .map_err(|e| format!("提权重启失败：{e}"))?;
+    let status = child
+        .wait()
+        .map_err(|e| format!("提权重启失败：{e}"))?;
+    if !status.success() {
+        return Err("提权已取消：未通过管理员权限授权".to_string());
+    }
+    // 提权实例已由独立进程拉起，退出当前标准权限实例
+    std::process::exit(0);
+}
+
+/// 启动时是否应弹出“是否以管理员身份运行”询问：非管理员，且本次不是提权重启拉起的实例。
+#[tauri::command]
+pub fn should_prompt_admin() -> Result<bool, String> {
+    let elevated_restart = std::env::args().any(|a| a == "--elevated-restart");
+    Ok(!crate::netcfg::is_admin() && !elevated_restart)
+}
+
 /// 提权实例启动后执行待决操作，写回结果并弹出提示框。
 pub fn process_pending_action(app: &AppHandle) {
     let path = pending_path(app);

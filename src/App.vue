@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
-import { ElMessage, ElConfigProvider } from 'element-plus';
+import { ElMessage, ElMessageBox, ElConfigProvider } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import {
 	getConfig,
 	saveConfig,
 	checkAdmin,
+	restartAsAdmin,
+	shouldPromptAdmin,
 	showWidget,
 	hideWidget,
 	setWindowTheme,
@@ -33,7 +35,7 @@ import AdapterDetail from '@/components/AdapterDetail.vue';
 import Diagnostics from '@/components/Diagnostics.vue';
 import NetworkScan from '@/components/NetworkScan.vue';
 import UpdateDialog from '@/components/UpdateDialog.vue';
-import { Setting, Connection, Sunny, Moon, Link, Refresh } from '@element-plus/icons-vue';
+import { Setting, Connection, Sunny, Moon, Link, Refresh, Key } from '@element-plus/icons-vue';
 
 const admin = ref(false);
 const appVersion = __APP_VERSION__;
@@ -130,6 +132,8 @@ let adaptersUnlisten: UnlistenFn | null = null;
 
 onMounted(async () => {
 	await init();
+	// 先处理权限询问（内部已吞掉取消/异常），结束后再静默检查更新，避免弹窗叠加
+	await promptAdminIfNeeded();
 	void silentCheckUpdate();
 	// 挂件切换后通知主窗：本地延时刷新等待收敛，不再回播挂件，避免互相触发
 	adaptersUnlisten = await onAdaptersChanged(() =>
@@ -214,6 +218,41 @@ async function onCreateShortcut() {
 		ElMessage.error(typeof e === 'string' ? e : '创建桌面快捷方式失败');
 	} finally {
 		shortcutBusy.value = false;
+	}
+}
+
+/// 启动时若非管理员，询问是否以管理员身份重启；提权拉起的实例不再重复弹
+async function promptAdminIfNeeded() {
+	let need = false;
+	try {
+		need = await shouldPromptAdmin();
+	} catch {
+		return;
+	}
+	if (!need) return;
+	try {
+		await ElMessageBox.confirm(
+			'当前为标准权限，修改网卡 IP/DNS、启用或禁用网卡等操作需要管理员权限。是否以管理员身份重启？',
+			'权限提示',
+			{
+				confirmButtonText: '以管理员重启',
+				cancelButtonText: '暂不',
+				type: 'warning',
+				distinguishCancelAndClose: true,
+			}
+		);
+		await restartAsAdmin();
+	} catch {
+		// 用户取消或关闭，继续标准权限运行
+	}
+}
+
+/// 设置页：以管理员身份重启（成功后当前进程由后端退出；UAC 取消则留在标准权限）
+async function onRestartAsAdmin() {
+	try {
+		await restartAsAdmin();
+	} catch (e) {
+		ElMessage.error(typeof e === 'string' ? e : '提权重启失败');
 	}
 }
 
@@ -370,6 +409,17 @@ async function manualCheckUpdate() {
 							<el-radio value="exit">直接退出软件</el-radio>
 							<el-radio value="tray">最小化到系统托盘</el-radio>
 						</el-radio-group>
+					</div>
+				</el-form-item>
+				<el-form-item v-if="!admin">
+					<div class="settings-inline-row">
+						<span class="settings-inline-label">当前为标准权限</span>
+						<el-button
+							class="shortcut-btn"
+							:icon="Key"
+							@click="onRestartAsAdmin"
+							>以管理员身份重启</el-button
+						>
 					</div>
 				</el-form-item>
 				<el-form-item>

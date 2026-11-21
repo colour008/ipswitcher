@@ -359,6 +359,8 @@ pub fn run() {
             scanner::run_host_scan,
             scanner::stop_host_scan,
             elevate::elevate_action,
+            elevate::restart_as_admin,
+            elevate::should_prompt_admin,
             get_config,
             save_config_cmd,
             check_admin,

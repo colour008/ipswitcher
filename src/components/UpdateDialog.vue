@@ -25,7 +25,16 @@ const phase = ref<Phase>('confirm');
 const errorMsg = ref('');
 const downloaded = ref(0);
 const total = ref(0);
+/** 是否保留现有网卡配置（当前仅记录，升级默认不删除配置文件） */
+const keepConfig = ref(true);
 let unlistenProgress: UnlistenFn | null = null;
+
+/// 版本号展示：后端 tag_name 可能自带 v 前缀，统一为“至多一个 v”
+function displayVersion(v?: string | null): string {
+  const s = (v ?? '').trim();
+  if (!s) return '';
+  return /^[vV]/.test(s) ? s : `v${s}`;
+}
 
 const progressPercent = computed(() => {
   if (!total.value) return 0;
@@ -69,6 +78,7 @@ watch(
       errorMsg.value = '';
       downloaded.value = 0;
       total.value = props.info?.assetSize ?? 0;
+      keepConfig.value = true;
     } else {
       cleanupProgress();
     }
@@ -122,9 +132,9 @@ onUnmounted(cleanupProgress);
     <div v-if="phase === 'confirm'" class="update-body">
       <div class="update-title-row">
         <span class="update-title">发现新版本</span>
-        <span class="update-version-badge">v{{ info?.latestVersion }}</span>
+        <span class="update-version-badge">{{ displayVersion(info?.latestVersion) }}</span>
       </div>
-      <div class="update-sub">当前版本 v{{ info?.currentVersion }}</div>
+      <div class="update-sub">当前版本 {{ displayVersion(info?.currentVersion) }}</div>
 
       <div class="update-notes-title">更新说明</div>
       <el-scrollbar v-if="hasNotes" class="update-notes">
@@ -132,13 +142,17 @@ onUnmounted(cleanupProgress);
       </el-scrollbar>
       <div v-else class="update-notes update-notes-empty">（无更新说明）</div>
 
+      <el-checkbox v-model="keepConfig" class="keep-config">
+        保留现有网卡配置（更新不会删除）
+      </el-checkbox>
+
       <div v-if="info?.message" class="update-warn">{{ info.message }}</div>
     </div>
 
     <div v-else-if="phase === 'downloading'" class="update-body update-body--progress">
       <div class="update-title-row">
         <span class="update-title">正在下载更新包</span>
-        <span class="update-version-badge">v{{ info?.latestVersion }}</span>
+        <span class="update-version-badge">{{ displayVersion(info?.latestVersion) }}</span>
       </div>
       <el-progress :percentage="progressPercent" :stroke-width="10" />
       <div class="update-size">
@@ -229,6 +243,16 @@ onUnmounted(cleanupProgress);
   font-size: 12px;
   color: var(--danger);
   line-height: 1.5;
+}
+
+.keep-config {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.keep-config :deep(.el-checkbox__label) {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .update-size {
