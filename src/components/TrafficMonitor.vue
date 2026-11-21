@@ -16,6 +16,13 @@ interface TrafficSession {
 const sessions = reactive(new Map<string, TrafficSession>());
 const uploadRate = ref(0);
 const downloadRate = ref(0);
+const HISTORY_WINDOW_SECONDS = 60;
+const uploadHistory = ref<number[]>(Array(HISTORY_WINDOW_SECONDS).fill(0));
+const downloadHistory = ref<number[]>(Array(HISTORY_WINDOW_SECONDS).fill(0));
+const uploadPath = computed(() => sparkline(uploadHistory.value));
+const downloadPath = computed(() => sparkline(downloadHistory.value));
+const uploadArea = computed(() => `${uploadPath.value} L120 27 L0 27 Z`);
+const downloadArea = computed(() => `${downloadPath.value} L120 27 L0 27 Z`);
 const reading = ref(false);
 const unavailable = ref(false);
 const clock = ref(Date.now());
@@ -36,6 +43,31 @@ let timer: number | undefined;
 let clockTimer: number | undefined;
 let sampling = false;
 let mounted = false;
+
+function sparkline(values: number[]) {
+	// 固定 60 秒窗口；缩放基于当前窗口峰值并留出顶部余量，零流量贴近基线。
+	const peak = Math.max(0, ...values);
+	const scale = Math.max(1024, peak * 1.18);
+	const points = values.map((value, index) => ({
+		x: (index / Math.max(1, values.length - 1)) * 120,
+		y: 26 - (Math.max(0, value) / scale) * 21,
+	}));
+	if (!points.length) return 'M0 26 L120 26';
+	// 二次曲线只柔化折点，采样点本身仍来自真实速率，不做均值滤波。
+	let path = `M${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+	for (let i = 1; i < points.length - 1; i++) {
+		const midX = (points[i].x + points[i + 1].x) / 2;
+		const midY = (points[i].y + points[i + 1].y) / 2;
+		path += ` Q${points[i].x.toFixed(2)} ${points[i].y.toFixed(2)} ${midX.toFixed(2)} ${midY.toFixed(2)}`;
+	}
+	const last = points[points.length - 1];
+	return path + ` L${last.x.toFixed(2)} ${last.y.toFixed(2)}`;
+}
+
+function pushHistory() {
+	uploadHistory.value = [...uploadHistory.value.slice(-(HISTORY_WINDOW_SECONDS - 1)), uploadRate.value];
+	downloadHistory.value = [...downloadHistory.value.slice(-(HISTORY_WINDOW_SECONDS - 1)), downloadRate.value];
+}
 
 function newSession(): TrafficSession {
 	return {
@@ -85,11 +117,13 @@ async function sample() {
 		current.lastSampleAt = now;
 		sessions.set(name, current);
 		if (name === currentName.value) unavailable.value = false;
+		if (name === currentName.value) pushHistory();
 	} catch {
 		if (name === currentName.value) {
 			unavailable.value = true;
 			uploadRate.value = 0;
 			downloadRate.value = 0;
+			pushHistory();
 		}
 	} finally {
 		reading.value = false;
@@ -149,6 +183,8 @@ function formatDuration(totalSeconds: number): string {
 watch(currentName, () => {
 	uploadRate.value = 0;
 	downloadRate.value = 0;
+	uploadHistory.value = Array(HISTORY_WINDOW_SECONDS).fill(0);
+	downloadHistory.value = Array(HISTORY_WINDOW_SECONDS).fill(0);
 	unavailable.value = false;
 	void sample();
 });
@@ -198,6 +234,7 @@ onUnmounted(() => {
 					<span class="metric-label upload-rate"><el-icon><Top /></el-icon>上传</span>
 					<strong>{{ unavailable ? '—' : formatRate(uploadRate) }}</strong>
 				</div>
+				<svg class="metric-wave upload-wave" viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true"><path class="grid-line" d="M0 3 H120 M0 13 H120 M0 23 H120" /><path class="wave-area" :d="uploadArea" /><path class="wave-line" :d="uploadPath" /></svg>
 				<div class="metric-total"><span>累计</span><strong>{{ formatBytes(session?.uploaded ?? 0) }}</strong></div>
 			</div>
 			<div class="metric-item">
@@ -205,6 +242,7 @@ onUnmounted(() => {
 					<span class="metric-label download-rate"><el-icon><Bottom /></el-icon>下载</span>
 					<strong>{{ unavailable ? '—' : formatRate(downloadRate) }}</strong>
 				</div>
+				<svg class="metric-wave download-wave" viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true"><path class="grid-line" d="M0 3 H120 M0 13 H120 M0 23 H120" /><path class="wave-area" :d="downloadArea" /><path class="wave-line" :d="downloadPath" /></svg>
 				<div class="metric-total"><span>累计</span><strong>{{ formatBytes(session?.downloaded ?? 0) }}</strong></div>
 			</div>
 		</div>
@@ -318,6 +356,12 @@ onUnmounted(() => {
 	min-width: 0;
 	padding: 7px 9px 6px;
 }
+.metric-wave { display:block; width:100%; height:30px; margin:4px 0 2px; pointer-events:none; overflow:visible; }
+.metric-wave .grid-line { fill:none; stroke:var(--panel-border); stroke-width:.65; stroke-dasharray:2 2; opacity:.75; }
+.metric-wave .wave-area { fill:var(--accent); fill-opacity:.16; stroke:none; transition:d .35s ease; }
+.metric-wave .wave-line { fill:none; stroke:var(--accent); stroke-width:.8; stroke-linecap:round; stroke-linejoin:round; transition:d .35s ease; }
+.download-wave .wave-area { fill:var(--success); }
+.download-wave .wave-line { stroke:var(--success); }
 .metric-item + .metric-item {
 	border-left: 1px solid var(--panel-border);
 }

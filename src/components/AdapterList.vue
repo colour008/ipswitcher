@@ -313,49 +313,18 @@ function openNetworkPanel() {
 					popper-class="adapter-tip">
 					<template #content>
 						<div class="tip-info">
-							<div class="tip-row">
-								<span class="tip-label">名称</span
-								><span>{{ row.name }}</span>
+							<div class="tip-heading">
+								<div class="tip-name" :title="row.name">{{ row.name }}</div>
+								<span class="tip-status" :class="`is-${row.status}`">{{ row.status === 'connected' ? '已连接' : row.status === 'disabled' ? '已禁用' : '未连接' }}</span>
 							</div>
-							<div class="tip-row">
-								<span class="tip-label">设备</span
-								><span>{{ row.description }}</span>
-							</div>
-							<div class="tip-row">
-								<span class="tip-label">状态</span
-								><span>{{
-									row.status === 'connected'
-										? '已连接'
-										: row.status === 'disabled'
-											? '已禁用'
-											: '未连接'
-								}}</span>
-							</div>
-							<div class="tip-row">
-								<span class="tip-label">MAC</span
-								><span>{{ row.mac || '-' }}</span>
-							</div>
-							<div class="tip-row">
-								<span class="tip-label">速率</span
-								><span>{{ row.link_speed || '-' }}</span>
-							</div>
-							<div class="tip-row">
-								<span class="tip-label">IPv4</span
-								><span>{{ row.ipv4.join('、') || '-' }}</span>
-							</div>
-							<div class="tip-row">
-								<span class="tip-label">掩码</span
-								><span>{{
-									row.subnet_mask.join('、') || '-'
-								}}</span>
-							</div>
-							<div class="tip-row">
-								<span class="tip-label">网关</span
-								><span>{{ row.gateway || '-' }}</span>
-							</div>
-							<div class="tip-row">
-								<span class="tip-label">DNS</span
-								><span>{{ row.dns.join('、') || '-' }}</span>
+							<div class="tip-device" :title="row.description">{{ row.description || '网络适配器' }}</div>
+							<div class="tip-grid">
+								<div class="tip-cell"><span>IPv4 地址</span><strong>{{ row.ipv4.join('、') || '-' }}</strong></div>
+								<div class="tip-cell"><span>链路速率</span><strong>{{ row.link_speed || '-' }}</strong></div>
+								<div class="tip-cell"><span>子网掩码</span><strong>{{ row.subnet_mask.join('、') || '-' }}</strong></div>
+								<div class="tip-cell"><span>MAC 地址</span><strong>{{ row.mac || '-' }}</strong></div>
+								<div class="tip-cell"><span>默认网关</span><strong>{{ row.gateway || '-' }}</strong></div>
+								<div class="tip-cell"><span>DNS 服务器</span><strong>{{ row.dns.join('、') || '-' }}</strong></div>
 							</div>
 						</div>
 					</template>
@@ -682,28 +651,85 @@ function openNetworkPanel() {
 	background-color: var(--panel-bg) !important;
 	color: var(--text-primary) !important;
 	border: 1px solid var(--panel-border) !important;
+	border-radius: 12px !important;
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28) !important;
+	padding: 12px 14px !important;
+	max-width: min(420px, calc(100vw - 32px)) !important;
 }
 .adapter-tip .el-popper__arrow::before {
 	background-color: var(--panel-bg) !important;
 	border-color: var(--panel-border) !important;
 }
 .adapter-tip .tip-info {
-	display: flex;
-	flex-direction: column;
-	gap: 5px;
-	font-size: 12px;
-	min-width: 230px;
-	max-width: 320px;
+	width: min(390px, calc(100vw - 64px));
+	min-width: 270px;
 	color: var(--text-primary);
 }
-.adapter-tip .tip-row {
+.adapter-tip .tip-heading {
 	display: flex;
-	gap: 10px;
-	line-height: 1.4;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
 }
-.adapter-tip .tip-label {
-	width: 52px;
-	flex-shrink: 0;
+.adapter-tip .tip-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 650;
+	color: var(--text-primary);
+}
+.adapter-tip .tip-status {
+	flex: none;
+	padding: 3px 7px;
+	border-radius: 999px;
+	font-size: 10px;
+	line-height: 1.2;
+	color: var(--success);
+	background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.adapter-tip .tip-status.is-disabled {
 	color: var(--text-secondary);
+	background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+}
+.adapter-tip .tip-status.is-disconnected {
+	color: var(--danger);
+	background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.adapter-tip .tip-device {
+	margin-top: 4px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid var(--panel-border);
+	color: var(--text-secondary);
+	font-size: 10px;
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+.adapter-tip .tip-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	column-gap: 16px;
+	row-gap: 10px;
+	padding-top: 10px;
+}
+.adapter-tip .tip-cell {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+	font-size: 10px;
+}
+.adapter-tip .tip-cell span {
+	color: var(--text-secondary);
+	font-size: 9px;
+}
+.adapter-tip .tip-cell strong {
+	min-width: 0;
+	color: var(--text-primary);
+	font-size: 10px;
+	font-weight: 550;
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
 }
 </style>

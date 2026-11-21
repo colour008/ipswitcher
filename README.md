@@ -1,6 +1,6 @@
 # IPSwitcher 网卡 IP 快速切换工具
 
-基于 **Tauri v2 + Vue 3 + TypeScript + Vite + Element Plus** 的 Windows 桌面工具，支持网卡 IP/DNS 快速切换、多网卡批量管理、方案保存、主机扫描、实时流量监控与常用网络诊断。
+基于 **Tauri v2 + Vue 3 + TypeScript + Vite + Element Plus** 的 Windows 桌面工具，支持网卡 IP/DNS 快速切换、多网卡批量管理、配置库保存与新建、主机扫描、实时流量监控（含速率趋势曲线）与常用网络诊断。
 
 ## 界面预览
 
@@ -141,26 +141,26 @@ IPSwitcher/
 
 ## 下载产物
 
-最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.2.0 产物如下：
+最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.2.1 产物如下：
 
 | 产物 | 文件 | 说明 |
 | --- | --- | --- |
-| NSIS 安装包 | [IPSwitcher_2.2.0_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.0/IPSwitcher_2.2.0_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
-| 绿色便携版 | [IPSwitcher_v2.2.0_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.2.0/IPSwitcher_v2.2.0_portable.zip) | 解压即用，配置保存在程序同级目录 |
-| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.0/IPSwitcher.exe) | 单文件可执行程序 |
+| NSIS 安装包 | [IPSwitcher_2.2.1_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.1/IPSwitcher_2.2.1_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
+| 绿色便携版 | [IPSwitcher_v2.2.1_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.2.1/IPSwitcher_v2.2.1_portable.zip) | 解压即用，配置保存在程序同级目录 |
+| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.1/IPSwitcher.exe) | 单文件可执行程序 |
 
 ## 路线图
 
 **基础体验**
 
 - IPv4 / IPv6 分离显示
-- 方案备份与导入导出（JSON）
+- 配置备份与导入导出（JSON）
 - 常用 DNS 快捷切换
 
 **核心能力**
 
 - 单网卡多 IP + 多 DNS
-- 挂件内直接切换方案
+- 挂件内直接切换配置
 
 **运维工具**
 

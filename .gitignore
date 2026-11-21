@@ -18,6 +18,7 @@ config.json
 
 # --- 本机环境脚本与开发调试记录 ---
 .env-setup/
+artifacts/
 
 # --- 操作系统 / 编辑器杂项 ---
 .DS_Store

@@ -25,6 +25,7 @@ const applying = ref(false);
 const profileId = ref('');
 const editVisible = ref(false);
 const editProfileId = ref('');
+const creatingProfile = ref(false);
 const editForm = reactive({
 	name: '',
 	mode: 'dhcp' as 'dhcp' | 'static',
@@ -191,6 +192,7 @@ function selectProfile(id: string) {
 }
 
 function openEdit(p: IpProfile) {
+	creatingProfile.value = false;
 	editProfileId.value = p.id;
 	editForm.name = p.name;
 	editForm.mode = p.mode;
@@ -202,9 +204,22 @@ function openEdit(p: IpProfile) {
 	editVisible.value = true;
 }
 
+function openNewProfile() {
+	creatingProfile.value = true;
+	editProfileId.value = '';
+	editForm.name = '';
+	editForm.mode = mode.value;
+	editForm.ip = form.ip;
+	editForm.mask = form.mask;
+	editForm.gateway = form.gateway;
+	editForm.dns1 = form.dns1;
+	editForm.dns2 = form.dns2;
+	editVisible.value = true;
+}
+
 async function confirmEdit() {
 	if (!editForm.name.trim()) {
-		ElMessage.warning('请填写方案名称');
+		ElMessage.warning('请填写配置名称');
 		return;
 	}
 	if (editForm.mode === 'static') {
@@ -220,8 +235,22 @@ async function confirmEdit() {
 	const existing = appConfig.value.profiles.find(
 		(x) => x.id === editProfileId.value,
 	);
+	if (creatingProfile.value) {
+		appConfig.value.profiles.push({
+			id: crypto.randomUUID(), name: editForm.name.trim(), mode: editForm.mode,
+			ip: editForm.mode === 'static' ? editForm.ip || null : null,
+			mask: editForm.mode === 'static' ? editForm.mask || null : null,
+			gateway: editForm.mode === 'static' ? editForm.gateway || null : null,
+			dns1: editForm.dns1 || null, dns2: editForm.dns2 || null,
+		});
+		await saveConfig(appConfig.value);
+		emitConfigChanged();
+		ElMessage.success('配置已新增');
+		editVisible.value = false;
+		return;
+	}
 	if (!existing) {
-		ElMessage.warning('方案不存在或已被删除');
+		ElMessage.warning('配置不存在或已被删除');
 		editVisible.value = false;
 		return;
 	}
@@ -235,7 +264,7 @@ async function confirmEdit() {
 	existing.dns2 = editForm.dns2 || null;
 	await saveConfig(appConfig.value);
 	emitConfigChanged();
-	ElMessage.success('方案已更新');
+	ElMessage.success('配置已更新');
 	editVisible.value = false;
 }
 
@@ -252,7 +281,7 @@ function removeProfile(id: string) {
 	if (profileId.value === id) profileId.value = '';
 	saveConfig(appConfig.value);
 	emitConfigChanged();
-	ElMessage.success('方案已删除');
+	ElMessage.success('配置已删除');
 }
 
 async function saveProfile() {
@@ -261,8 +290,8 @@ async function saveProfile() {
 	let name: string | undefined;
 	try {
 		const ret = await ElMessageBox.prompt(
-			'请输入方案名称',
-			'保存 IP 方案',
+			'请输入配置名称',
+			'保存 IP 配置',
 			{
 				inputPlaceholder: defaultName,
 				inputValue: defaultName,
@@ -287,7 +316,7 @@ async function saveProfile() {
 	appConfig.value.profiles.push(profile);
 	await saveConfig(appConfig.value);
 	emitConfigChanged();
-	ElMessage.success('方案已保存');
+	ElMessage.success('配置已保存');
 }
 </script>
 
@@ -363,7 +392,7 @@ async function saveProfile() {
 
 		<div class="target-grid">
 			<div class="panel form-col">
-				<div class="card-title">目标配置</div>
+				<div class="card-title">IP 配置</div>
 				<el-radio-group v-model="mode" class="mode-radio">
 					<el-radio value="dhcp">DHCP 自动获取</el-radio>
 					<el-radio value="static">固定 IP</el-radio>
@@ -422,18 +451,16 @@ async function saveProfile() {
 						type="primary"
 						:loading="applying"
 						@click="handleApply">
-						应用到当前网卡
+						应用配置
 					</el-button>
-					<span class="muted tip">作用于当前选中的网卡</span>
+					<el-button :disabled="!adapter" @click="saveProfile">保存配置</el-button>
 				</div>
 			</div>
 
 			<div class="panel profile-col">
 				<div class="profile-header">
-					<div class="card-title">保存的方案</div>
-					<el-button size="small" @click="saveProfile"
-						>保存当前</el-button
-					>
+					<div class="card-title">配置库</div>
+					<el-button size="small" type="primary" plain @click="openNewProfile">＋ 新增配置</el-button>
 				</div>
 
 				<div v-if="appConfig.profiles.length" class="profile-list">
@@ -485,21 +512,22 @@ async function saveProfile() {
 					</div>
 				</div>
 				<div v-else class="profile-empty muted">
-					暂无保存的方案，配置好参数后点击「保存当前」
+					暂无保存的配置，配置好参数后点击「保存当前」
 				</div>
 			</div>
 		</div>
 
 		<el-dialog
 			v-model="editVisible"
-			title="编辑方案"
-			width="460px"
+			:title="creatingProfile ? '新增配置' : '编辑配置'"
+			class="profile-dialog"
+			width="560px"
 			destroy-on-close>
-			<el-form label-position="top">
-				<el-form-item label="方案名称">
+			<el-form label-position="top" class="profile-dialog-form">
+				<el-form-item label="配置名称">
 					<el-input
 						v-model="editForm.name"
-						placeholder="请输入方案名称" />
+						placeholder="请输入配置名称" />
 				</el-form-item>
 				<el-form-item label="配置类型">
 					<el-radio-group v-model="editForm.mode">
@@ -538,7 +566,7 @@ async function saveProfile() {
 			<template #footer>
 				<el-button @click="editVisible = false">取消</el-button>
 				<el-button type="primary" @click="confirmEdit"
-					>保存修改</el-button
+					>{{ creatingProfile ? '创建配置' : '保存修改' }}</el-button
 				>
 			</template>
 		</el-dialog>
@@ -564,7 +592,7 @@ async function saveProfile() {
 	background: linear-gradient(145deg, var(--panel-glass), var(--panel-bg));
 }
 .card-title {
-	font-size: 15px;
+	font-size: 14px;
 	font-weight: 600;
 	margin-bottom: 8px;
 	letter-spacing: 0.015em;
@@ -584,8 +612,8 @@ async function saveProfile() {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	font-size: 16px;
-	font-weight: 700;
+	font-size: 14px;
+	font-weight: 650;
 }
 .current-status-dot {
 	width: 8px;
@@ -634,8 +662,8 @@ async function saveProfile() {
 	width: 110px;
 	background: var(--app-bg);
 	color: var(--text-secondary);
-	font-size: 12px;
-	font-weight: 600;
+	font-size: 11px;
+	font-weight: 550;
 }
 .desc :deep(.el-descriptions__table) {
 	border-color: var(--panel-border);
@@ -645,7 +673,7 @@ async function saveProfile() {
 .desc :deep(.el-descriptions__cell) {
 	border-color: var(--panel-border);
 	padding: 8px 12px;
-	font-size: 13px;
+	font-size: 12px;
 }
 .desc :deep(.el-descriptions__content) {
 	color: var(--text-primary);
@@ -719,11 +747,8 @@ async function saveProfile() {
 .actions {
 	display: flex;
 	align-items: center;
-	gap: 12px;
+	gap: 8px;
 	margin-top: 8px;
-}
-.tip {
-	font-size: 12px;
 }
 
 .profile-col {
@@ -813,6 +838,98 @@ async function saveProfile() {
 	font-size: 12px;
 	padding: 16px 8px;
 	text-align: center;
+}
+
+/* 方案编辑/创建弹窗：字段成组排列，缩短滚动距离 */
+:global(.profile-dialog.el-dialog) {
+	max-width: calc(100vw - 40px);
+	border: 1px solid var(--panel-border-glass);
+	border-radius: 16px;
+	background: var(--panel-bg);
+	box-shadow: 0 24px 72px rgba(0, 0, 0, 0.42);
+}
+:global(.profile-dialog .el-dialog__header) {
+	margin: 0;
+	padding: 20px 22px 14px;
+	border-bottom: 1px solid var(--panel-border);
+}
+:global(.profile-dialog .el-dialog__title) {
+	font-size: 17px;
+	font-weight: 650;
+	letter-spacing: 0.01em;
+}
+:global(.profile-dialog .el-dialog__body) {
+	max-height: min(68vh, 620px);
+	overflow-y: auto;
+	padding: 18px 22px 8px;
+}
+:global(.profile-dialog .el-dialog__footer) {
+	padding: 12px 22px 18px;
+	border-top: 1px solid var(--panel-border);
+}
+.profile-dialog-form {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	column-gap: 14px;
+}
+.profile-dialog-form :deep(.el-form-item) {
+	min-width: 0;
+	margin-bottom: 13px;
+}
+.profile-dialog-form :deep(.el-form-item:nth-child(-n + 2)) {
+	grid-column: 1 / -1;
+}
+.profile-dialog-form :deep(.el-form-item__label) {
+	padding-bottom: 5px;
+	color: var(--text-secondary);
+	font-size: 11px;
+	line-height: 1.4;
+}
+.profile-dialog-form :deep(.el-input__wrapper) {
+	min-height: 38px;
+	border-radius: 8px;
+	box-shadow: 0 0 0 1px var(--panel-border) inset;
+	transition: box-shadow 0.16s ease, background 0.16s ease;
+}
+.profile-dialog-form :deep(.el-input__wrapper:hover) {
+	box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.profile-dialog-form :deep(.el-input__wrapper.is-focus) {
+	box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px var(--accent-soft);
+}
+.profile-dialog-form :deep(.el-radio-group) {
+	display: flex;
+	gap: 8px;
+}
+.profile-dialog-form :deep(.el-radio) {
+	margin: 0;
+	padding: 7px 10px;
+	border: 1px solid var(--panel-border);
+	border-radius: 8px;
+	background: var(--app-bg);
+}
+.profile-dialog-form :deep(.el-radio.is-checked) {
+	border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+	background: var(--accent-soft);
+}
+.profile-dialog-form :deep(.el-radio__label) {
+	font-size: 11px;
+}
+:global(.profile-dialog .el-dialog__footer .el-button) {
+	min-width: 88px;
+	height: 34px;
+	border-radius: 8px;
+	font-size: 11px;
+	font-weight: 550;
+}
+
+@media (max-width: 620px) {
+	.profile-dialog-form {
+		grid-template-columns: 1fr;
+	}
+	.profile-dialog-form :deep(.el-form-item) {
+		grid-column: 1 / -1;
+	}
 }
 
 @media (max-width: 1000px) {
