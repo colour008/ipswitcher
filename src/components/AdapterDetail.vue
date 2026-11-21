@@ -451,16 +451,16 @@ async function saveProfile() {
 						type="primary"
 						:loading="applying"
 						@click="handleApply">
-						应用配置
+						应用
 					</el-button>
-					<el-button :disabled="!adapter" @click="saveProfile">保存配置</el-button>
+					<el-button :disabled="!adapter" @click="saveProfile">保存</el-button>
 				</div>
 			</div>
 
 			<div class="panel profile-col">
 				<div class="profile-header">
 					<div class="card-title">配置库</div>
-					<el-button size="small" type="primary" plain @click="openNewProfile">＋ 新增配置</el-button>
+					<el-button size="small" type="primary" plain @click="openNewProfile">＋ 新增</el-button>
 				</div>
 
 				<div v-if="appConfig.profiles.length" class="profile-list">

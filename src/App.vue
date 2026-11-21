@@ -387,7 +387,7 @@ async function manualCheckUpdate() {
 							:icon="Link"
 							:loading="shortcutBusy"
 							@click="onCreateShortcut"
-							>在桌面创建快捷方式</el-button
+							>创建快捷方式</el-button
 						>
 					</div>
 				</el-form-item>
