@@ -155,7 +155,8 @@ body {
 }
 .settings-dialog .settings-switch-row {
 	display: flex;
-	gap: 32px;
+	align-items: center;
+	gap: 24px;
 }
 .settings-dialog .settings-switch-cell {
 	flex: 1;
@@ -165,6 +166,10 @@ body {
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
+}
+.settings-dialog .settings-switch-row .shortcut-btn {
+	flex: none;
+	white-space: nowrap;
 }
 .settings-dialog .settings-switch-label {
 	font-size: 12px;

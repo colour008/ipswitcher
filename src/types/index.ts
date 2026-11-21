@@ -99,3 +99,25 @@ export type PendingAction =
   | { kind: "Dns"; names: string[]; dns1: string; dns2?: string | null }
   | { kind: "Toggle"; names: string[]; enabled: boolean }
   | { kind: "Rename"; name: string; new_name: string };
+
+/** 检查更新结果（与 Rust 侧 UpdateInfo 对应） */
+export interface UpdateInfo {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  /** Release Notes 正文，纯文本展示 */
+  notes: string;
+  /** 当前分发形态：installed / portable / standalone */
+  flavor: string;
+  assetName: string | null;
+  assetUrl: string | null;
+  assetSize: number;
+  assetDigest: string | null;
+  message: string | null;
+}
+
+/** 更新包下载进度 */
+export interface UpdateProgress {
+  downloaded: number;
+  total: number;
+}

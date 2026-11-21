@@ -9,24 +9,40 @@ fn under_protected_install_dir(dir: &Path) -> bool {
     lower.contains("program files") || lower.starts_with("c:\\windows")
 }
 
-/// 判断当前是否为便携版（绿色版，配置随 exe 走）：
+/// 程序分发形态：安装版（Program Files 等受保护目录）/ 便携目录（含 portable.marker）/ 绿色单文件
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallFlavor {
+    Installed,
+    Portable,
+    Standalone,
+}
+
+/// 判断当前安装形态：
 /// - exe 同级存在 `installed.marker`：强制按安装版处理；
-/// - exe 同级存在 `portable.marker`：强制按便携版处理；
+/// - exe 同级存在 `portable.marker`：强制按便携目录处理；
 /// - 无标记时：exe 位于 Program Files / Windows 等受保护目录视为安装版，
-///   其余普通目录（桌面、下载、U盘、解压目录等）视为绿色版便携存储。
-fn is_portable() -> bool {
+///   其余普通目录（桌面、下载、U盘、解压目录等）视为绿色单文件。
+pub fn install_flavor() -> InstallFlavor {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             if dir.join("installed.marker").exists() {
-                return false;
+                return InstallFlavor::Installed;
             }
             if dir.join("portable.marker").exists() {
-                return true;
+                return InstallFlavor::Portable;
             }
-            return !under_protected_install_dir(dir);
+            if under_protected_install_dir(dir) {
+                return InstallFlavor::Installed;
+            }
+            return InstallFlavor::Standalone;
         }
     }
-    false
+    InstallFlavor::Installed
+}
+
+/// 判断当前是否为便携/绿色版（配置随 exe 走）：安装版之外均按绿色存储处理
+fn is_portable() -> bool {
+    !matches!(install_flavor(), InstallFlavor::Installed)
 }
 
 /// 配置文件路径：

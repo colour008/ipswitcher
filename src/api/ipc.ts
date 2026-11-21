@@ -9,6 +9,8 @@ import type {
   StaticInput,
   ScanHostResult,
   ScanDoneResult,
+  UpdateInfo,
+  UpdateProgress,
 } from "@/types";
 
 export const listAdapters = () => invoke<AdapterInfo[]>("list_adapters");
@@ -138,6 +140,26 @@ export function onTrayApplyResult(
 ): Promise<UnlistenFn> {
   return listen<TrayResultPayload>("tray-apply-result", (e) => cb(e.payload));
 }
+
+/** 检查 GitHub Release 是否存在更新 */
+export const checkUpdate = () => invoke<UpdateInfo>("check_update");
+
+/** 下载更新包到临时目录，返回本地临时文件路径 */
+export const downloadUpdate = (
+  url: string,
+  fileName: string,
+  digest: string | null,
+  expectedSize: number
+) =>
+  invoke<string>("download_update", { url, fileName, digest, expectedSize });
+
+/** 应用更新：安装版拉起安装器，绿色版退出后由辅助进程覆盖并重启 */
+export const applyUpdate = (assetPath: string, assetName: string) =>
+  invoke<void>("apply_update", { assetPath, assetName });
+
+/** 订阅更新包下载进度 */
+export const onUpdateProgress = (cb: (p: UpdateProgress) => void) =>
+  listen<UpdateProgress>("update-download-progress", (e) => cb(e.payload));
 
 export type { IpProfile };
 export type { UnlistenFn } from "@tauri-apps/api/event";

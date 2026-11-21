@@ -8,6 +8,7 @@ mod process;
 mod shortcut;
 mod scanner;
 mod types;
+mod update;
 
 use config::{load_config, save_config};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -344,7 +345,10 @@ pub fn run() {
             set_widget_pinned,
             autostart::set_autostart,
             autostart::get_autostart,
-            shortcut::create_desktop_shortcut
+            shortcut::create_desktop_shortcut,
+            update::check_update,
+            update::download_update,
+            update::apply_update
         ])
         .run(tauri::generate_context!())
         .expect("启动 IPSwitcher 失败");

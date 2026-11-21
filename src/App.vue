@@ -15,7 +15,9 @@ import {
 	createDesktopShortcut,
 	emitConfigChanged,
 	openDevTools,
+	checkUpdate,
 } from '@/api/ipc';
+import type { UpdateInfo } from '@/types';
 import {
 	appConfig,
 	adapters,
@@ -30,7 +32,8 @@ import TrafficMonitor from '@/components/TrafficMonitor.vue';
 import AdapterDetail from '@/components/AdapterDetail.vue';
 import Diagnostics from '@/components/Diagnostics.vue';
 import NetworkScan from '@/components/NetworkScan.vue';
-import { Setting, Connection, Sunny, Moon, Link } from '@element-plus/icons-vue';
+import UpdateDialog from '@/components/UpdateDialog.vue';
+import { Setting, Connection, Sunny, Moon, Link, Refresh } from '@element-plus/icons-vue';
 
 const admin = ref(false);
 const appVersion = __APP_VERSION__;
@@ -41,6 +44,10 @@ const closeAction = ref<'exit' | 'tray'>('tray');
 const widgetVisible = ref(true);
 const autostart = ref(true);
 const shortcutBusy = ref(false);
+const updateVisible = ref(false);
+const updateInfo = ref<UpdateInfo | null>(null);
+const updateAvailable = ref(false);
+const checkingUpdate = ref(false);
 const sidebarWidth = ref(350);
 const theme = ref<'light' | 'dark'>('dark');
 const bodyRef = ref<HTMLElement | null>(null);
@@ -123,6 +130,7 @@ let adaptersUnlisten: UnlistenFn | null = null;
 
 onMounted(async () => {
 	await init();
+	void silentCheckUpdate();
 	// 挂件切换后通知主窗：本地延时刷新等待收敛，不再回播挂件，避免互相触发
 	adaptersUnlisten = await onAdaptersChanged(() =>
 		scheduleDelayedRefresh(false),
@@ -208,6 +216,46 @@ async function onCreateShortcut() {
 		shortcutBusy.value = false;
 	}
 }
+
+/// 启动时静默检查更新：有新版才弹窗，失败（断网 / 限流 / 异常）静默忽略不打扰
+async function silentCheckUpdate() {
+	try {
+		const info = await checkUpdate();
+		updateAvailable.value = info.hasUpdate && !!info.assetUrl;
+		if (updateAvailable.value) {
+			updateInfo.value = info;
+			updateVisible.value = true;
+		}
+	} catch {
+		// 静默忽略
+	}
+}
+
+/// 设置页手动检查更新：失败 / 已是最新 / 无匹配资产均给出明确提示
+async function manualCheckUpdate() {
+	if (checkingUpdate.value) return;
+	checkingUpdate.value = true;
+	try {
+		const info = await checkUpdate();
+		if (!info.hasUpdate) {
+			updateAvailable.value = false;
+			ElMessage.success('已是最新版本');
+			return;
+		}
+		if (!info.assetUrl) {
+			updateAvailable.value = false;
+			ElMessage.warning(info.message ?? '暂未匹配到更新包');
+			return;
+		}
+		updateAvailable.value = true;
+		updateInfo.value = info;
+		updateVisible.value = true;
+	} catch (e) {
+		ElMessage.error(typeof e === 'string' ? e : '检查更新失败，请稍后重试');
+	} finally {
+		checkingUpdate.value = false;
+	}
+}
 </script>
 
 <template>
@@ -233,7 +281,12 @@ async function onCreateShortcut() {
 					<div class="brand-title">IPSwitcher</div>
 					<div class="brand-sub-row">
 						<span class="muted">网卡 IP 快速切换工具</span>
-						<span class="brand-version">v{{ appVersion }}</span>
+						<el-badge
+							:is-dot="true"
+							:hidden="!updateAvailable"
+							class="version-badge">
+							<span class="brand-version">v{{ appVersion }}</span>
+						</el-badge>
 					</div>
 				</div>
 			</div>
@@ -256,7 +309,9 @@ async function onCreateShortcut() {
 					content="软件设置"
 					placement="bottom"
 					popper-class="app-tip">
-					<el-button :icon="Setting" circle @click="openSettings" />
+					<el-badge :is-dot="true" :hidden="!updateAvailable">
+						<el-button :icon="Setting" circle @click="openSettings" />
+					</el-badge>
 				</el-tooltip>
 			</div>
 		</header>
@@ -327,11 +382,6 @@ async function onCreateShortcut() {
 							<span class="settings-switch-label">开机自启</span>
 							<el-switch v-model="autostart" size="small" />
 						</div>
-					</div>
-				</el-form-item>
-				</el-form>
-				<template #footer>
-					<div class="settings-footer-row">
 						<el-button
 							class="shortcut-btn"
 							:icon="Link"
@@ -339,6 +389,20 @@ async function onCreateShortcut() {
 							@click="onCreateShortcut"
 							>在桌面创建快捷方式</el-button
 						>
+					</div>
+				</el-form-item>
+				</el-form>
+				<template #footer>
+					<div class="settings-footer-row">
+						<el-badge :is-dot="true" :hidden="!updateAvailable">
+							<el-button
+								class="shortcut-btn"
+								:icon="Refresh"
+								:loading="checkingUpdate"
+								@click="manualCheckUpdate"
+								>检查更新</el-button
+							>
+						</el-badge>
 						<div class="settings-footer-actions">
 							<el-button @click="settingsVisible = false">取消</el-button>
 							<el-button type="primary" @click="saveDefaultAdapter"
@@ -348,6 +412,8 @@ async function onCreateShortcut() {
 					</div>
 				</template>
 		</el-dialog>
+
+		<UpdateDialog v-model:visible="updateVisible" :info="updateInfo" />
 	</div>
 	</el-config-provider>
 </template>
@@ -397,6 +463,14 @@ async function onCreateShortcut() {
 	background: var(--accent-soft);
 	border-radius: var(--radius-sm);
 	padding: 1px 6px;
+}
+.version-badge {
+	display: inline-flex;
+	align-items: center;
+}
+.version-badge :deep(.el-badge__content.is-dot) {
+	top: 2px;
+	right: -2px;
 }
 .header-right {
 	display: flex;

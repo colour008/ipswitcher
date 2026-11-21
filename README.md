@@ -1,6 +1,6 @@
 # IPSwitcher 网卡 IP 快速切换工具
 
-基于 **Tauri v2 + Vue 3 + TypeScript + Vite + Element Plus** 的 Windows 桌面工具，支持网卡 IP/DNS 快速切换、多网卡批量管理、配置库保存与新建、主机扫描、实时流量监控（含速率趋势曲线）与常用网络诊断。
+基于 **Tauri v2 + Vue 3 + TypeScript + Vite + Element Plus** 的 Windows 桌面工具，支持网卡 IP/DNS 快速切换、多网卡批量管理、配置库保存与新建、主机扫描、实时流量监控（含速率趋势曲线）、常用网络诊断，并支持应用内检查版本更新。
 
 ## 界面预览
 
@@ -52,66 +52,6 @@ npm run build
 npm run app:build
 ```
 
-## 目录结构
-
-```
-IPSwitcher/
-├── index.html                  主窗口入口页面
-├── widget.html                 桌面挂件入口页面
-├── package.json                前端依赖与 npm 脚本
-├── package-lock.json           前端依赖锁定文件
-├── vite.config.ts              Vite 构建配置
-├── tsconfig.json               TypeScript 配置（前端）
-├── tsconfig.node.json          TypeScript 配置（Node 侧）
-├── src/                        前端源码
-│   ├── main.ts                 前端入口
-│   ├── App.vue                 主窗口根组件
-│   ├── env.d.ts                前端类型声明
-│   ├── api/
-│   │   └── ipc.ts              Tauri IPC 封装与事件监听
-│   ├── components/
-│   │   ├── AdapterList.vue     左侧网卡列表
-│   │   ├── AdapterDetail.vue   网卡 IP / DNS 配置详情
-│   │   ├── Diagnostics.vue     网络诊断面板
-│   │   ├── NetworkScan.vue     主机扫描
-│   │   └── TrafficMonitor.vue  网卡实时流量监控
-│   ├── composables/
-│   │   └── useStore.ts         共享状态与网卡数据
-│   ├── styles/
-│   │   └── global.css          全局样式与主题变量
-│   ├── types/
-│   │   └── index.ts            前端类型定义
-│   └── widget/
-│       ├── main.ts             挂件入口
-│       └── Widget.vue          桌面挂件组件
-├── src-tauri/                  Rust 后端（Tauri）
-│   ├── build.rs                Tauri 构建脚本
-│   ├── Cargo.toml              Rust 依赖与包配置
-│   ├── Cargo.lock              Rust 依赖锁定文件
-│   ├── tauri.conf.json         应用与打包配置
-│   ├── capabilities/
-│   │   └── default.json        Tauri 权限配置
-│   ├── icons/                  多尺寸应用图标
-│   └── src/
-│       ├── main.rs             二进制入口
-│       ├── lib.rs              应用装配、托盘、命令注册、挂件状态
-│       ├── netcfg.rs           网卡枚举、IP/DNS 切换、流量计数、网卡启停与重命名
-│       ├── diag.rs             诊断命令异步执行与流式输出
-│       ├── scanner.rs          主机扫描与在线历史
-│       ├── elevate.rs          UAC 提权与待决操作执行
-│       ├── autostart.rs        开机自启注册表管理
-│       ├── shortcut.rs         桌面快捷方式创建
-│       ├── config.rs           配置持久化（便携版同级目录 / 安装版 AppData）
-│       ├── encoding.rs         控制台输出解码（UTF-8 优先，GBK 回退）
-│       ├── process.rs          子进程辅助（隐藏控制台黑窗）
-│       └── types.rs            共享数据结构
-├── tools/                      版本号、打包、图标生成脚本
-├── screenshots/                README 界面截图
-├── README.md                   项目说明
-├── LICENSE                     MIT 许可证
-└── 使用说明.md                  详细使用文档
-```
-
 ## 核心后端命令
 
 | 命令 | 说明 |
@@ -131,6 +71,9 @@ IPSwitcher/
 | `check_admin` | 判断当前是否具备管理员权限 |
 | `set_autostart` / `get_autostart` | 读写开机自启状态 |
 | `create_desktop_shortcut` | 创建桌面快捷方式 |
+| `check_update` | 检查 GitHub Release 是否存在新版本，并按当前分发形态匹配更新资产 |
+| `download_update` | 下载更新包到临时目录，流式回传下载进度，优先校验 SHA256、缺失时回退校验大小 |
+| `apply_update` | 应用更新：安装版拉起安装器，绿色 / 便携版退出后覆盖主程序并重启 |
 
 > 挂件显隐、透明度、尺寸固定、主题切换等内部命令由前端挂件组件直接调用，未在上表列出。
 
@@ -141,13 +84,13 @@ IPSwitcher/
 
 ## 下载产物
 
-最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.2.1 产物如下：
+最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.2.2 产物如下：
 
 | 产物 | 文件 | 说明 |
 | --- | --- | --- |
-| NSIS 安装包 | [IPSwitcher_2.2.1_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.1/IPSwitcher_2.2.1_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
-| 绿色便携版 | [IPSwitcher_v2.2.1_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.2.1/IPSwitcher_v2.2.1_portable.zip) | 解压即用，配置保存在程序同级目录 |
-| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.1/IPSwitcher.exe) | 单文件可执行程序 |
+| NSIS 安装包 | [IPSwitcher_2.2.2_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.2/IPSwitcher_2.2.2_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
+| 绿色便携版 | [IPSwitcher_v2.2.2_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.2.2/IPSwitcher_v2.2.2_portable.zip) | 解压即用，配置保存在程序同级目录 |
+| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.2/IPSwitcher.exe) | 单文件可执行程序 |
 
 ## 路线图
 

@@ -1,5 +1,6 @@
 import { createApp } from "vue";
 import {
+	ElBadge,
 	ElButton,
 	ElDescriptions,
 	ElDescriptionsItem,
@@ -28,6 +29,7 @@ const app = createApp(App);
 
 // 按需注册主窗实际使用的 Element Plus 组件（图标已在各组件内显式引入，不再全局全量注册）
 [
+	ElBadge,
 	ElButton,
 	ElDescriptions,
 	ElDescriptionsItem,
