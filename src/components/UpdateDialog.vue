@@ -137,9 +137,9 @@ onUnmounted(cleanupProgress);
       <div class="update-sub">当前版本 {{ displayVersion(info?.currentVersion) }}</div>
 
       <div class="update-notes-title">更新说明</div>
-      <el-scrollbar v-if="hasNotes" class="update-notes">
+      <div v-if="hasNotes" class="update-notes">
         <div class="markdown-body" v-html="renderedNotes"></div>
-      </el-scrollbar>
+      </div>
       <div v-else class="update-notes update-notes-empty">（无更新说明）</div>
 
       <el-checkbox v-model="keepConfig" class="keep-config">
@@ -226,6 +226,7 @@ onUnmounted(cleanupProgress);
 
 .update-notes {
   max-height: 260px;
+  overflow-y: auto;
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);
   background: var(--panel-bg);
