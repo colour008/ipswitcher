@@ -1,6 +1,6 @@
 [package]
 name = "ipswitcher"
-version = "2.2.7"
+version = "2.2.8"
 description = "网卡 IP 快速切换工具"
 authors = ["JamHoo"]
 license = "MIT"

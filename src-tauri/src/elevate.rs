@@ -103,11 +103,16 @@ pub fn restart_as_admin() -> Result<bool, String> {
     std::process::exit(0);
 }
 
-/// 启动时是否应弹出“是否以管理员身份运行”询问：非管理员，且本次不是提权重启拉起的实例。
+/// 启动时是否应弹出“是否以管理员身份运行”询问：非管理员、非提权重启实例，
+/// 且用户尚未在询问中选择“暂不”（该选择记入配置，可在设置页手动启用管理员权限）。
 #[tauri::command]
-pub fn should_prompt_admin() -> Result<bool, String> {
+pub fn should_prompt_admin(app: AppHandle) -> Result<bool, String> {
     let elevated_restart = std::env::args().any(|a| a == "--elevated-restart");
-    Ok(!crate::netcfg::is_admin() && !elevated_restart)
+    if elevated_restart || crate::netcfg::is_admin() {
+        return Ok(false);
+    }
+    let cfg = crate::config::load_config(&app);
+    Ok(!cfg.admin_prompt_dismissed.unwrap_or(false))
 }
 
 /// 提权实例启动后执行待决操作，写回结果并弹出提示框。

@@ -243,7 +243,9 @@ async function promptAdminIfNeeded() {
 		);
 		await restartAsAdmin();
 	} catch {
-		// 用户取消或关闭，继续标准权限运行
+		// 用户选择“暂不”或关闭弹窗：记录偏好，后续启动不再自动询问，可在设置页手动启用
+		appConfig.value.admin_prompt_dismissed = true;
+		void saveConfig(appConfig.value);
 	}
 }
 
@@ -411,14 +413,16 @@ async function manualCheckUpdate() {
 						</el-radio-group>
 					</div>
 				</el-form-item>
-				<el-form-item v-if="!admin">
+				<el-form-item>
 					<div class="settings-inline-row">
-						<span class="settings-inline-label">当前为标准权限</span>
+						<span class="settings-inline-label">管理员权限</span>
+						<el-tag v-if="admin" type="success" size="small">已启用</el-tag>
 						<el-button
+							v-else
 							class="shortcut-btn"
 							:icon="Key"
 							@click="onRestartAsAdmin"
-							>以管理员身份重启</el-button
+							>启用管理员权限</el-button
 						>
 					</div>
 				</el-form-item>

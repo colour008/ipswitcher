@@ -72,6 +72,9 @@ pub struct AppConfig {
     /// 界面主题：light / dark，缺省按深色处理
     #[serde(default)]
     pub theme: Option<String>,
+    /// 启动管理员权限询问是否已被用户选择“暂不”（置 true 后不再自动弹窗，可在设置页手动启用）
+    #[serde(default)]
+    pub admin_prompt_dismissed: Option<bool>,
     /// Previously responsive hosts, used to distinguish offline from never discovered.
     #[serde(default)]
     pub host_history: Vec<HostHistory>,
