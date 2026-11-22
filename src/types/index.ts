@@ -49,6 +49,7 @@ export interface AppConfig {
   theme?: "light" | "dark" | null;
   /** 启动管理员询问是否已选“暂不”（true 后不再自动弹窗，可在设置页手动启用） */
   admin_prompt_dismissed?: boolean | null;
+  elevate_on_startup?: boolean | null;
   host_history?: HostHistory[];
 }
 

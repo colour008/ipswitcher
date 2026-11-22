@@ -75,6 +75,9 @@ pub struct AppConfig {
     /// 启动管理员权限询问是否已被用户选择“暂不”（置 true 后不再自动弹窗，可在设置页手动启用）
     #[serde(default)]
     pub admin_prompt_dismissed: Option<bool>,
+    /// 用户已选择以管理员权限重启；后续启动时自动通过 UAC 请求管理员权限
+    #[serde(default)]
+    pub elevate_on_startup: Option<bool>,
     /// Previously responsive hosts, used to distinguish offline from never discovered.
     #[serde(default)]
     pub host_history: Vec<HostHistory>,

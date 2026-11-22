@@ -45,7 +45,22 @@ const progressPercent = computed(() => {
 const renderedNotes = computed(() => {
   const raw = props.info?.notes?.trim();
   if (!raw) return '';
-  const html = marked.parse(raw, { gfm: true, breaks: false, async: false }) as string;
+  const decorated = raw.replace(/^(#{1,3}\s*)([^#\r\n].*)$/gm, (line, prefix: string, title: string) => {
+    const heading = title.trim();
+    const icon = /功能改进|新增功能|新功能/.test(heading)
+      ? '✨'
+      : /界面优化|界面美化|体验优化/.test(heading)
+        ? '🎨'
+        : /问题修复|修复内容|缺陷修复/.test(heading)
+          ? '🛠️'
+          : /性能优化/.test(heading)
+            ? '⚡'
+            : /安全更新|安全修复/.test(heading)
+              ? '🛡️'
+              : '';
+    return icon && !heading.startsWith(icon) ? `${prefix}${icon} ${heading}` : line;
+  });
+  const html = marked.parse(decorated, { gfm: true, breaks: false, async: false }) as string;
   return DOMPurify.sanitize(html);
 });
 
@@ -136,15 +151,23 @@ onUnmounted(cleanupProgress);
       </div>
       <div class="update-sub">当前版本 {{ displayVersion(info?.currentVersion) }}</div>
 
-      <div class="update-notes-title">更新说明</div>
+      <div class="update-notes-title"><span aria-hidden="true">✨</span> 更新说明</div>
       <div v-if="hasNotes" class="update-notes">
         <div class="markdown-body" v-html="renderedNotes"></div>
       </div>
       <div v-else class="update-notes update-notes-empty">（无更新说明）</div>
 
-      <el-checkbox v-model="keepConfig" class="keep-config">
-        保留现有网卡配置（更新不会删除）
-      </el-checkbox>
+      <label class="keep-config" :class="{ 'is-checked': keepConfig }">
+        <input v-model="keepConfig" type="checkbox" />
+        <span class="keep-config-check" aria-hidden="true">
+          <svg v-if="keepConfig" viewBox="0 0 16 16"><path d="m3.5 8.2 3 3 6-6.4" /></svg>
+        </span>
+        <span class="keep-config-copy">
+          <strong>保留现有网卡配置</strong>
+          <small>更新后继续使用已保存的方案与设置</small>
+        </span>
+        <span class="keep-config-default">默认开启</span>
+      </label>
 
       <div v-if="info?.message" class="update-warn">{{ info.message }}</div>
     </div>
@@ -219,9 +242,16 @@ onUnmounted(cleanupProgress);
 }
 
 .update-notes-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   color: var(--text-secondary);
   margin-top: 2px;
+}
+
+.update-notes-title span {
+  font-size: 14px;
 }
 
 .update-notes {
@@ -247,13 +277,93 @@ onUnmounted(cleanupProgress);
 }
 
 .keep-config {
-  font-size: 12px;
-  color: var(--text-secondary);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 9px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-bg) 55%, transparent);
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
 }
 
-.keep-config :deep(.el-checkbox__label) {
+.keep-config:hover,
+.keep-config.is-checked {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--panel-border));
+}
+
+.keep-config.is-checked {
+  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
+}
+
+.keep-config input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.keep-config input:focus-visible + .keep-config-check {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.keep-config-check {
+  display: grid;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1.5px solid var(--text-secondary);
+  border-radius: 5px;
+  color: #fff;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.is-checked .keep-config-check {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.keep-config-check svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.keep-config-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.keep-config-copy strong {
+  color: var(--text-primary);
   font-size: 12px;
+  font-weight: 600;
+}
+
+.keep-config-copy small,
+.keep-config-default {
   color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.keep-config-default {
+  flex: none;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 .update-size {

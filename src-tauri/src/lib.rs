@@ -153,9 +153,10 @@ fn set_widget_pinned(app: AppHandle, pinned: bool) -> Result<(), String> {
 /// 主窗默认尺寸（与 tauri.conf.json 中 main 窗口一致）
 const MAIN_DEFAULT_SIZE: LogicalSize<f64> = LogicalSize::new(1180.0, 830.0);
 
-fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
+        let _ = w.unminimize();
         let _ = w.set_focus();
     }
 }
@@ -292,6 +293,24 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let args: Vec<String> = std::env::args().collect();
+    let is_elevate_helper = args.iter().any(|arg| arg == "--elevate");
+    let is_elevated_restart = args.iter().any(|arg| arg == "--elevated-restart");
+
+    // 用户曾明确选择管理员重启时，下一次从普通快捷方式启动也会再请求 UAC。
+    // Windows 不会跨进程保存管理员令牌，因此每次新启动仍需由用户确认 UAC。
+    if !is_elevate_helper && !is_elevated_restart && !netcfg::is_admin() {
+        let mut config = config::load_startup_config();
+        if config.elevate_on_startup.unwrap_or(false) {
+            if elevate::restart_as_admin_on_startup().is_ok() {
+                std::process::exit(0);
+            }
+            // 用户取消 UAC 后继续以标准权限运行，避免每次启动反复弹 UAC。
+            config.elevate_on_startup = Some(false);
+            let _ = config::save_startup_config(&config);
+        }
+    }
+
     tauri::Builder::default()
         .setup(|app| {
             let args: Vec<String> = std::env::args().collect();
@@ -303,8 +322,18 @@ pub fn run() {
             setup_tray(app)?;
             app.manage(PinState(AtomicBool::new(false)));
 
+            #[cfg(target_os = "windows")]
+            single_instance::start_activation_listener(app.handle().clone());
+
             // 启动时按配置恢复挂件可见性
-            let startup_cfg = load_config(&app.handle());
+            let mut startup_cfg = load_config(&app.handle());
+            if args.iter().any(|arg| arg == "--elevated-restart")
+                && netcfg::is_admin()
+            {
+                startup_cfg.elevate_on_startup = Some(true);
+                startup_cfg.admin_prompt_dismissed = Some(true);
+                let _ = save_config(&app.handle(), &startup_cfg);
+            }
             if let Some(w) = app.get_webview_window("widget") {
                 // 关闭 Windows DWM 为无边框窗口默认渲染的阴影/细边框，避免全透明时残留一圈白线
                 #[cfg(target_os = "windows")]

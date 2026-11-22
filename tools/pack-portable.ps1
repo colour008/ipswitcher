@@ -52,6 +52,7 @@ $defaultConfig = [ordered]@{
 	widget_height   = $null
 	theme           = $null
 	admin_prompt_dismissed = $null
+	elevate_on_startup     = $null
 }
 $json = $defaultConfig | ConvertTo-Json -Depth 6
 [IO.File]::WriteAllText((Join-Path $stageAppDir "config.json"), $json, (New-Object System.Text.UTF8Encoding($false)))

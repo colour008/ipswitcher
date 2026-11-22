@@ -103,8 +103,27 @@ pub fn restart_as_admin() -> Result<bool, String> {
     std::process::exit(0);
 }
 
-/// 启动时是否应弹出“是否以管理员身份运行”询问：非管理员、非提权重启实例，
-/// 且用户尚未在询问中选择“暂不”（该选择记入配置，可在设置页手动启用管理员权限）。
+/// 启动时自动重新请求管理员权限。UAC 被取消时返回错误，由调用方清除自动提权偏好。
+pub fn restart_as_admin_on_startup() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("定位程序路径失败：{e}"))?;
+    let exe_q = exe.to_string_lossy().replace('\'', "''");
+    let ps = format!(
+        "Start-Process -FilePath '{}' -ArgumentList '--elevated-restart' -Verb RunAs",
+        exe_q
+    );
+    let mut child_cmd = std::process::Command::new("powershell");
+    child_cmd.args(["-NoProfile", "-Command", &ps]);
+    suppress_window(&mut child_cmd);
+    let status = child_cmd
+        .status()
+        .map_err(|e| format!("提权启动失败：{e}"))?;
+    if !status.success() {
+        return Err("未通过管理员权限授权".to_string());
+    }
+    Ok(())
+}
+
+/// 启动时是否应弹出“是否以管理员身份运行”询问。
 #[tauri::command]
 pub fn should_prompt_admin(app: AppHandle) -> Result<bool, String> {
     let elevated_restart = std::env::args().any(|a| a == "--elevated-restart");
@@ -112,6 +131,9 @@ pub fn should_prompt_admin(app: AppHandle) -> Result<bool, String> {
         return Ok(false);
     }
     let cfg = crate::config::load_config(&app);
+    if cfg.elevate_on_startup.unwrap_or(false) {
+        return Ok(false);
+    }
     Ok(!cfg.admin_prompt_dismissed.unwrap_or(false))
 }
 

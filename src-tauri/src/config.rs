@@ -45,6 +45,45 @@ fn is_portable() -> bool {
     !matches!(install_flavor(), InstallFlavor::Installed)
 }
 
+/// 在 Tauri AppHandle 创建前读取启动偏好，供 Windows 入口决定是否需要 UAC 提权。
+pub fn load_startup_config() -> AppConfig {
+    let path = if is_portable() {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("config.json")))
+    } else {
+        std::env::var_os("APPDATA").map(|app_data| {
+            PathBuf::from(app_data)
+                .join("com.jamhoo.ipswitcher")
+                .join("config.json")
+        })
+    };
+    path.and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str::<AppConfig>(&text).ok())
+        .unwrap_or_default()
+}
+
+/// 更新 Tauri 启动前使用的配置文件；便携版与安装版路径和 `config_path` 保持一致。
+pub fn save_startup_config(config: &AppConfig) -> Result<(), String> {
+    let path = if is_portable() {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("config.json")))
+    } else {
+        std::env::var_os("APPDATA").map(|app_data| {
+            PathBuf::from(app_data)
+                .join("com.jamhoo.ipswitcher")
+                .join("config.json")
+        })
+    }
+    .ok_or_else(|| "无法定位软件配置目录".to_string())?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败：{e}"))?;
+    }
+    let text = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    fs::write(path, text).map_err(|e| format!("配置写入失败：{e}"))
+}
+
 /// 配置文件路径：
 /// - 便携版：软件同级目录 config.json（U 盘携带，配置随包走）
 /// - 安装版：系统 AppData 配置目录
