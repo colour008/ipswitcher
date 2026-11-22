@@ -4,11 +4,15 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import {
   downloadUpdate,
+  cancelDownload,
   applyUpdate,
   onUpdateProgress,
   type UnlistenFn,
 } from '@/api/ipc';
 import type { UpdateInfo } from '@/types';
+
+/** 与后端 update.rs 的 DOWNLOAD_CANCELLED 保持一致，用于区分“取消”与“失败” */
+const DOWNLOAD_CANCELLED = '更新已取消';
 
 const props = defineProps<{
   visible: boolean;
@@ -27,6 +31,8 @@ const downloaded = ref(0);
 const total = ref(0);
 /** 是否保留现有网卡配置（当前仅记录，升级默认不删除配置文件） */
 const keepConfig = ref(true);
+/** 下载取消请求已发出，等待下载协程退出 */
+const cancelling = ref(false);
 let unlistenProgress: UnlistenFn | null = null;
 
 /// 版本号展示：后端 tag_name 可能自带 v 前缀，统一为“至多一个 v”
@@ -45,22 +51,7 @@ const progressPercent = computed(() => {
 const renderedNotes = computed(() => {
   const raw = props.info?.notes?.trim();
   if (!raw) return '';
-  const decorated = raw.replace(/^(#{1,3}\s*)([^#\r\n].*)$/gm, (line, prefix: string, title: string) => {
-    const heading = title.trim();
-    const icon = /功能改进|新增功能|新功能/.test(heading)
-      ? '✨'
-      : /界面优化|界面美化|体验优化/.test(heading)
-        ? '🎨'
-        : /问题修复|修复内容|缺陷修复/.test(heading)
-          ? '🛠️'
-          : /性能优化/.test(heading)
-            ? '⚡'
-            : /安全更新|安全修复/.test(heading)
-              ? '🛡️'
-              : '';
-    return icon && !heading.startsWith(icon) ? `${prefix}${icon} ${heading}` : line;
-  });
-  const html = marked.parse(decorated, { gfm: true, breaks: false, async: false }) as string;
+  const html = marked.parse(raw, { gfm: true, breaks: false, async: false }) as string;
   return DOMPurify.sanitize(html);
 });
 
@@ -94,6 +85,7 @@ watch(
       downloaded.value = 0;
       total.value = props.info?.assetSize ?? 0;
       keepConfig.value = true;
+      cancelling.value = false;
     } else {
       cleanupProgress();
     }
@@ -110,8 +102,10 @@ async function startUpdate() {
   errorMsg.value = '';
   downloaded.value = 0;
   total.value = props.info.assetSize;
+  cancelling.value = false;
   cleanupProgress();
   unlistenProgress = await onUpdateProgress((p) => {
+    if (phase.value !== 'downloading') return;
     downloaded.value = p.downloaded;
     if (p.total > 0) total.value = p.total;
   });
@@ -125,9 +119,30 @@ async function startUpdate() {
     // 后端成功后会退出主程序，由辅助进程完成覆盖并重启
     await applyUpdate(localPath, props.info.assetName);
   } catch (e) {
-    phase.value = 'error';
-    errorMsg.value = typeof e === 'string' ? e : '更新失败，请稍后重试';
     cleanupProgress();
+    const msg = typeof e === 'string' ? e : '更新失败，请稍后重试';
+    if (msg === DOWNLOAD_CANCELLED) {
+      // 用户主动取消：回到确认页，进度清零，可再次更新或稍后再说
+      phase.value = 'confirm';
+      errorMsg.value = '';
+      downloaded.value = 0;
+      total.value = props.info?.assetSize ?? 0;
+      cancelling.value = false;
+    } else {
+      phase.value = 'error';
+      errorMsg.value = msg;
+    }
+  }
+}
+
+/** 取消进行中的下载；收尾由 startUpdate 的 catch 收到取消错误后完成 */
+async function onCancelDownload() {
+  if (cancelling.value) return;
+  cancelling.value = true;
+  try {
+    await cancelDownload();
+  } catch {
+    // 命令异常不阻断：下载协程仍会在取消标志下退出
   }
 }
 
@@ -151,7 +166,7 @@ onUnmounted(cleanupProgress);
       </div>
       <div class="update-sub">当前版本 {{ displayVersion(info?.currentVersion) }}</div>
 
-      <div class="update-notes-title"><span aria-hidden="true">✨</span> 更新说明</div>
+      <div class="update-notes-title">更新说明</div>
       <div v-if="hasNotes" class="update-notes">
         <div class="markdown-body" v-html="renderedNotes"></div>
       </div>
@@ -194,6 +209,9 @@ onUnmounted(cleanupProgress);
         <el-button type="primary" :disabled="!info?.assetUrl" @click="startUpdate"
           >立即更新</el-button
         >
+      </template>
+      <template v-else-if="phase === 'downloading'">
+        <el-button :loading="cancelling" @click="onCancelDownload">取消</el-button>
       </template>
       <template v-else-if="phase === 'error'">
         <el-button @click="close">关闭</el-button>
@@ -248,10 +266,6 @@ onUnmounted(cleanupProgress);
   font-size: 13px;
   color: var(--text-secondary);
   margin-top: 2px;
-}
-
-.update-notes-title span {
-  font-size: 14px;
 }
 
 .update-notes {

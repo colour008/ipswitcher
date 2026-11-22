@@ -321,6 +321,7 @@ pub fn run() {
 
             setup_tray(app)?;
             app.manage(PinState(AtomicBool::new(false)));
+            app.manage(update::DownloadCancel(AtomicBool::new(false)));
 
             #[cfg(target_os = "windows")]
             single_instance::start_activation_listener(app.handle().clone());
@@ -409,6 +410,7 @@ pub fn run() {
             shortcut::create_desktop_shortcut,
             update::check_update,
             update::download_update,
+            update::cancel_download,
             update::apply_update
         ])
         .run(tauri::generate_context!())

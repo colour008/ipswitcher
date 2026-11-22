@@ -159,6 +159,9 @@ export const downloadUpdate = (
 ) =>
   invoke<string>("download_update", { url, fileName, digest, expectedSize });
 
+/** 请求取消当前进行中的更新包下载 */
+export const cancelDownload = () => invoke<void>("cancel_download");
+
 /** 应用更新：安装版拉起安装器，绿色版退出后由辅助进程覆盖并重启 */
 export const applyUpdate = (assetPath: string, assetName: string) =>
   invoke<void>("apply_update", { assetPath, assetName });

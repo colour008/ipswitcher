@@ -6,8 +6,9 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 
 const REPO_OWNER: &str = "colour008";
 const REPO_NAME: &str = "ipswitcher";
@@ -49,6 +50,13 @@ pub struct UpdateProgress {
     pub downloaded: u64,
     pub total: u64,
 }
+
+/// 下载被用户取消时返回的固定错误文案，前端据此区分“取消”与“失败”
+pub const DOWNLOAD_CANCELLED: &str = "更新已取消";
+
+/// 跨命令共享的下载取消标志：`download_update` 开始时复位，
+/// `cancel_download` 置位后进行中的下载在下一数据块退出。
+pub struct DownloadCancel(pub AtomicBool);
 
 // ---------- GitHub API 响应结构 ----------
 
@@ -236,6 +244,7 @@ async fn stream_to_file(
     url: &str,
     dest: &Path,
     expected_size: u64,
+    cancel: &DownloadCancel,
 ) -> Result<(), String> {
     let resp = client
         .get(url)
@@ -251,6 +260,9 @@ async fn stream_to_file(
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
+        if cancel.0.load(Ordering::Relaxed) {
+            return Err(DOWNLOAD_CANCELLED.to_string());
+        }
         let chunk = chunk.map_err(|e| format!("下载中断：{e}"))?;
         file.write_all(&chunk).map_err(|e| format!("写入临时文件失败：{e}"))?;
         downloaded += chunk.len() as u64;
@@ -264,15 +276,18 @@ async fn stream_to_file(
     Ok(())
 }
 
-/// 下载更新包到系统临时目录，直连失败后依次回退加速节点；流式回传进度，优先校验 SHA256
+/// 下载更新包到系统临时目录，直连失败后依次回退加速节点；流式回传进度，优先校验 SHA256。
+/// 用户取消时立即中止，不继续回退其它节点，并清理半截临时文件。
 #[tauri::command]
 pub async fn download_update(
     app: AppHandle,
+    cancel_state: State<'_, DownloadCancel>,
     url: String,
     file_name: String,
     digest: Option<String>,
     expected_size: u64,
 ) -> Result<String, String> {
+    cancel_state.0.store(false, Ordering::Relaxed);
     let tmp_dir = std::env::temp_dir().join(UPDATE_TMP_DIR);
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("临时目录创建失败：{e}"))?;
     let dest = tmp_dir.join(&file_name);
@@ -288,7 +303,7 @@ pub async fn download_update(
 
     for dl_url in fallback_urls(&url) {
         let _ = fs::remove_file(&dest);
-        match stream_to_file(&client, &app, &dl_url, &dest, expected_size).await {
+        match stream_to_file(&client, &app, &dl_url, &dest, expected_size, cancel_state.inner()).await {
             Ok(_) => match verify_asset(&dest, digest.as_deref(), expected_size) {
                 Ok(()) => {
                     verified = true;
@@ -300,8 +315,13 @@ pub async fn download_update(
                 }
             },
             Err(e) => {
+                let cancelled = e == DOWNLOAD_CANCELLED;
                 last_err = e;
                 let _ = fs::remove_file(&dest);
+                // 取消属于用户主动中止，不再回退其它节点
+                if cancelled {
+                    break;
+                }
             }
         }
     }
@@ -311,6 +331,12 @@ pub async fn download_update(
         return Err(last_err);
     }
     Ok(dest.to_string_lossy().to_string())
+}
+
+/// 请求取消当前进行中的更新包下载；未在下载时置位也无副作用。
+#[tauri::command]
+pub fn cancel_download(cancel_state: State<'_, DownloadCancel>) {
+    cancel_state.0.store(true, Ordering::Relaxed);
 }
 
 fn unzip(zip_path: &Path, dest: &Path) -> Result<(), String> {
