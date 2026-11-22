@@ -395,7 +395,7 @@ onUnmounted(cleanupProgress);
 
 /* ---------- Markdown 渲染样式 ---------- */
 .markdown-body {
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.7;
   color: var(--text-primary);
   word-break: break-word;
@@ -410,11 +410,11 @@ onUnmounted(cleanupProgress);
 }
 
 .markdown-body :deep(h2) {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .markdown-body :deep(h3) {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .markdown-body :deep(h2:first-child),
@@ -460,7 +460,7 @@ onUnmounted(cleanupProgress);
 
 .markdown-body :deep(code) {
   font-family: inherit;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--accent);
   background: var(--accent-soft);
   border-radius: 4px;
@@ -478,7 +478,7 @@ onUnmounted(cleanupProgress);
   width: 100%;
   border-collapse: collapse;
   margin: 10px 0;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .markdown-body :deep(th),

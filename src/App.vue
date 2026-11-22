@@ -570,9 +570,11 @@ async function manualCheckUpdate() {
 	display: inline-flex;
 	align-items: center;
 }
-.version-badge :deep(.el-badge__content.is-dot) {
+/* 更新提示红点：贴在元素右上角内侧，去掉默认的向外平移 */
+:deep(.el-badge__content.is-fixed.is-dot) {
 	top: 2px;
-	right: -2px;
+	right: 2px;
+	transform: none;
 }
 .header-right {
 	display: flex;
