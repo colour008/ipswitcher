@@ -4,6 +4,8 @@
 	--panel-border: #eceef2;
 	--panel-glass: rgba(255, 255, 255, 0.65);
 	--panel-border-glass: rgba(255, 255, 255, 0.75);
+	--settings-card-bg: rgba(29, 33, 41, 0.015);
+	--settings-card-border: rgba(29, 33, 41, 0.025);
 	--text-primary: #1d2129;
 	--text-secondary: #6b7280;
 	--accent: #2563eb;
@@ -25,6 +27,8 @@ html.dark {
 	--panel-border: #272b32;
 	--panel-glass: rgba(255, 255, 255, 0.015);
 	--panel-border-glass: rgba(255, 255, 255, 0.08);
+	--settings-card-bg: rgba(255, 255, 255, 0.008);
+	--settings-card-border: rgba(255, 255, 255, 0.025);
 	--text-primary: #e6e8eb;
 	--text-secondary: #9aa0a8;
 	--accent: #4c8dff;
@@ -120,101 +124,437 @@ body {
 	background-color: var(--el-bg-color-overlay) !important;
 }
 
-/* 软件设置弹窗：内容字号略小，底部取消/保存按钮加大间距 */
-.settings-dialog .el-dialog__body {
-	font-size: 12px;
+/* 软件设置：清晰分组、轻量表面与一致的交互层级 */
+.settings-dialog.el-dialog {
+	max-width: calc(100vw - 32px);
+	margin: 0 auto;
+	border: 1px solid var(--panel-border);
+	border-radius: 18px;
+	background: var(--app-bg) !important;
+	background-color: var(--app-bg) !important;
+	box-shadow: 0 24px 72px rgba(0, 0, 0, 0.3);
+	overflow: hidden;
 }
-.settings-dialog .el-form-item {
-	margin-bottom: 12px;
+.settings-overlay.el-overlay {
+	background-color: rgba(0, 0, 0, 0.04) !important;
+}
+.settings-dialog .el-dialog__header {
+	margin: 0;
+	padding: 16px 22px 14px;
+	border-bottom: 1px solid var(--panel-border);
+}
+.settings-dialog .el-dialog__body {
+	padding: 16px 22px 18px;
+	color: var(--text-primary);
+	font-size: 13px;
 }
 .settings-dialog .el-dialog__footer {
-	padding-bottom: 24px;
+	padding: 12px 22px 16px;
+	border-top: 1px solid var(--panel-border);
 }
-.settings-dialog .el-form-item__label,
-.settings-dialog .el-radio__label,
-.settings-dialog .el-switch__label {
+.settings-dialog .settings-header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.settings-dialog .settings-header-mark {
+	width: 40px;
+	height: 40px;
+	display: grid;
+	place-items: center;
+	flex: none;
+	border: 1px solid rgba(76, 141, 255, 0.22);
+	border-radius: 12px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: 19px;
+}
+.settings-dialog .settings-header-copy {
+	min-width: 0;
+	flex: 1;
+}
+.settings-dialog .settings-title {
+	color: var(--text-primary);
+	font-size: 17px;
+	font-weight: 650;
+	line-height: 1.35;
+}
+.settings-dialog .settings-subtitle {
+	margin-top: 3px;
+	color: var(--text-secondary);
+	font-size: 12px;
+	font-weight: 400;
+}
+.settings-dialog .settings-close.el-button {
+	width: 32px;
+	height: 32px;
+	margin-left: auto;
+	border-color: transparent;
+	background: transparent;
+	color: var(--text-secondary);
+}
+.settings-dialog .settings-close.el-button:hover {
+	border-color: var(--panel-border);
+	background: var(--panel-glass);
+	color: var(--text-primary);
+}
+.settings-dialog .settings-content {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	max-height: min(68vh, 560px);
+	overflow: auto;
+	padding-right: 2px;
+}
+.settings-dialog .settings-section {
+	min-width: 0;
+}
+.settings-dialog .settings-section-heading {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin: 0 0 10px;
+}
+.settings-dialog .settings-section-title {
+	flex: none;
+	color: var(--text-primary);
+	font-size: 13px;
+	font-weight: 650;
+}
+.settings-dialog .settings-section-heading::after {
+	content: '';
+	height: 1px;
+	flex: 1;
+	background: linear-gradient(90deg, var(--panel-border), transparent);
+}
+.settings-dialog .settings-surface {
+	border: 1px solid var(--settings-card-border);
+	border-radius: 13px;
+	background: var(--settings-card-bg);
+}
+.settings-dialog .settings-item-icon {
+	width: 34px;
+	height: 34px;
+	display: grid;
+	place-items: center;
+	flex: none;
+	border: 1px solid var(--settings-card-border);
+	border-radius: 10px;
+	background: var(--settings-card-bg);
+	color: var(--text-secondary);
+	font-size: 16px;
+}
+.settings-dialog .settings-item-copy {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+}
+.settings-dialog .settings-item-copy strong {
+	color: var(--text-primary);
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.35;
+}
+.settings-dialog .settings-item-copy > span {
+	color: var(--text-secondary);
+	font-size: 11px;
+	line-height: 1.35;
+}
+.settings-dialog .settings-default-select {
+	width: 100%;
+}
+.settings-dialog .settings-default-select .el-select__wrapper {
+	min-height: 38px;
+	border-radius: 9px;
+	box-shadow: 0 0 0 1px var(--settings-card-border) inset;
+}
+.settings-dialog .settings-default-select .el-select__wrapper:hover,
+.settings-dialog .settings-default-select .el-select__wrapper.is-focused {
+	box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.settings-dialog .settings-close-card {
+	min-height: 58px;
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	margin-bottom: 10px;
+	padding: 8px 12px;
+	border: 1px solid var(--settings-card-border);
+	border-radius: 12px;
+	background: var(--settings-card-bg);
+}
+.settings-dialog .settings-close-label {
+	flex: none;
+	color: var(--text-secondary);
+	font-size: 12px;
+	font-weight: 500;
+}
+.settings-dialog .settings-toggle-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+}
+.settings-dialog .settings-close-radios {
+	display: flex;
+	flex: none;
+	align-items: center;
+	flex-wrap: nowrap;
+	justify-content: flex-end;
+	gap: 50px;
+	margin-left: auto;
+	margin-right: 10px;
+}
+.settings-dialog .settings-close-radios .el-radio {
+	margin-right: 0;
+}
+.settings-dialog .settings-close-radios .el-radio__label {
+	color: var(--text-primary);
 	font-size: 12px;
 }
-.settings-dialog .el-dialog__footer .el-button + .el-button {
-	margin-left: 16px;
+.settings-dialog .settings-toggle-card {
+	min-width: 0;
+	min-height: 58px;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 11px;
+}
+.settings-dialog .settings-toggle-card .el-switch {
+	flex: none;
+}
+.settings-dialog .settings-secondary-button.el-button,
+.settings-dialog .settings-update-button.el-button,
+.settings-dialog .settings-cancel-button.el-button {
+	font-size: 12px;
+	font-weight: 550;
+}
+.settings-dialog .settings-secondary-button.el-button {
+	min-height: 34px;
+	padding: 0 12px;
+	border-radius: 9px;
+}
+.settings-dialog .settings-permission-card {
+	min-height: 58px;
+	display: flex;
+	align-items: center;
+	gap: 11px;
+	padding: 11px 12px;
+}
+.settings-dialog .settings-permission-mark {
+	width: 34px;
+	height: 34px;
+	display: grid;
+	place-items: center;
+	flex: none;
+	border: 1px solid rgba(230, 162, 60, 0.12);
+	border-radius: 10px;
+	background: rgba(230, 162, 60, 0.045);
+	color: #e6a23c;
+	font-size: 16px;
+}
+.settings-dialog .settings-permission-mark.enabled {
+	border-color: rgba(74, 222, 128, 0.12);
+	background: rgba(74, 222, 128, 0.045);
+	color: var(--success);
+}
+.settings-dialog .settings-permission-copy {
+	display: flex;
+	min-width: 0;
+	flex: 1;
+	flex-direction: column;
+	gap: 3px;
+}
+.settings-dialog .settings-permission-heading {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+}
+.settings-dialog .settings-permission-heading strong {
+	color: var(--text-primary);
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.35;
+}
+.settings-dialog .settings-permission-card > .el-tag,
+.settings-dialog .settings-permission-card > .el-button {
+	margin-left: auto;
+	flex: none;
+	align-self: center;
+	font-size: 11px;
+}
+.settings-dialog .settings-permission-copy > span {
+	color: var(--text-secondary);
+	font-size: 11px;
+	line-height: 1.35;
+	white-space: nowrap;
+}
+.settings-dialog .settings-permission-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 154px;
+	gap: 10px;
+}
+.settings-dialog .settings-shortcut-card {
+	min-width: 0;
+	min-height: 58px;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 12px;
+	color: var(--text-primary);
+	text-align: left;
+	cursor: pointer;
+	transition: border-color 0.16s ease, background-color 0.16s ease;
+}
+.settings-dialog .settings-shortcut-card:hover {
+	border-color: rgba(76, 141, 255, 0.55);
+	background: var(--accent-soft);
+}
+.settings-dialog .settings-shortcut-card:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+.settings-dialog .settings-shortcut-card:disabled {
+	cursor: wait;
+	opacity: 0.72;
+}
+.settings-dialog .settings-shortcut-card .settings-item-icon {
+	width: 30px;
+	height: 30px;
+	color: var(--accent);
+}
+.settings-dialog .settings-shortcut-label {
+	flex: 1;
+	min-width: 0;
+	font-size: 11px;
+	font-weight: 600;
 }
 .settings-dialog .settings-footer-row {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 16px;
 }
 .settings-dialog .settings-footer-actions {
 	display: flex;
 	align-items: center;
-}
-.settings-dialog .el-dialog__title {
-	font-size: 14px;
-}
-.settings-dialog .el-dialog__footer .el-button {
-	font-size: 12px;
-}
-.settings-dialog .settings-switch-row {
-	display: flex;
-	align-items: center;
-	gap: 24px;
-}
-.settings-dialog .settings-switch-cell {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	flex-direction: row;
-	align-items: center;
-	justify-content: space-between;
 	gap: 8px;
 }
-.settings-dialog .settings-switch-row .shortcut-btn {
-	flex: none;
-	white-space: nowrap;
+.settings-dialog .settings-footer-actions .el-button + .el-button {
+	margin-left: 0;
 }
-.settings-dialog .settings-switch-label {
+.settings-dialog .settings-update-button.el-button,
+.settings-dialog .settings-cancel-button.el-button {
+	min-height: 36px;
+	border-radius: 9px;
+}
+.settings-dialog .settings-save-button.el-button {
+	min-width: 104px;
+	min-height: 36px;
+	border-radius: 9px;
 	font-size: 12px;
-	color: var(--text-secondary);
-}
-.settings-dialog .el-switch--small {
-	height: 14px;
-}
-.settings-dialog .el-switch--small .el-switch__core {
-	width: 26px;
-	height: 14px;
-	border-radius: 7px;
-}
-.settings-dialog .el-switch--small .el-switch__action {
-	width: 10px;
-	height: 10px;
-}
-.settings-dialog .settings-inline-row {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 12px;
-}
-.settings-dialog .settings-inline-label {
-	font-size: 12px;
-	color: var(--text-secondary);
-	flex: none;
-}
-.settings-dialog .el-radio {
-	margin-right: 36px;
-}
-.settings-dialog .shortcut-btn {
-	font-size: 11px;
+	font-weight: 600;
 }
 .settings-dialog .el-select,
 .settings-dialog .el-select .el-input__inner,
 .settings-dialog .el-select__placeholder {
-	font-size: 11px;
+	font-size: 12px;
 }
-.settings-select-popper {
-	min-width: auto;
+.settings-select-popper.el-popper,
+.settings-select-popper.el-popper.is-light,
+.settings-select-popper.el-popper.is-dark {
+	min-width: 0 !important;
+	max-width: calc(100vw - 48px);
+	box-sizing: border-box;
+	border: 1px solid var(--panel-border) !important;
+	border-radius: 12px;
+	background: var(--app-bg) !important;
+	color: var(--text-primary);
+	box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24) !important;
+	overflow: hidden;
+}
+.settings-select-popper .el-select-dropdown {
+	background: transparent !important;
+}
+.settings-select-popper .el-popper__arrow::before {
+	border-color: var(--panel-border) !important;
+	background: var(--app-bg) !important;
 }
 .settings-select-popper .el-select-dropdown__item {
-	font-size: 11px;
-	padding-right: 14px;
+	font-size: 12px;
+	padding: 8px 12px;
+	height: auto;
+	min-height: 44px;
+	line-height: normal;
+	white-space: normal;
+	color: var(--text-primary);
+}
+.settings-select-popper .el-select-dropdown__item.hover,
+.settings-select-popper .el-select-dropdown__item:hover {
+	background: rgba(128, 134, 148, 0.1);
+	color: var(--text-primary);
+}
+.settings-select-popper .el-select-dropdown__item.is-selected {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.settings-select-popper .settings-adapter-option {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	line-height: 1.35;
+}
+.settings-select-popper .settings-adapter-option-name,
+.settings-select-popper .settings-adapter-option-description {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.settings-select-popper .settings-adapter-option-name {
+	color: inherit;
+	font-size: 12px;
+}
+.settings-select-popper .settings-adapter-option-description {
+	color: var(--text-secondary);
+	font-size: 10px;
+}
+@media (max-width: 620px) {
+	.settings-dialog.el-dialog {
+		width: calc(100vw - 24px) !important;
+	}
+	.settings-dialog .el-dialog__header {
+		padding: 18px 18px 15px;
+	}
+	.settings-dialog .el-dialog__body {
+		padding: 16px 18px 18px;
+	}
+	.settings-dialog .el-dialog__footer {
+		padding: 12px 18px 16px;
+	}
+	.settings-dialog .settings-content {
+		max-height: calc(100vh - 205px);
+	}
+	.settings-dialog .settings-toggle-grid {
+		grid-template-columns: 1fr;
+	}
+	.settings-dialog .settings-permission-grid {
+		grid-template-columns: 1fr;
+	}
+	.settings-dialog .settings-permission-copy > span {
+		white-space: normal;
+	}
+}
+@media (max-width: 420px) {
+	.settings-dialog .settings-footer-row {
+		align-items: stretch;
+		flex-direction: column;
+	}
+	.settings-dialog .settings-footer-actions {
+		justify-content: flex-end;
+	}
 }
 
 /* 默认提示气泡：实色背景 + 对比文字 + 箭头，深浅色下均清晰可读 */

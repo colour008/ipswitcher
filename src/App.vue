@@ -35,7 +35,18 @@ import AdapterDetail from '@/components/AdapterDetail.vue';
 import Diagnostics from '@/components/Diagnostics.vue';
 import NetworkScan from '@/components/NetworkScan.vue';
 import UpdateDialog from '@/components/UpdateDialog.vue';
-import { Setting, Connection, Sunny, Moon, Link, Refresh, Key } from '@element-plus/icons-vue';
+import {
+	Setting,
+	Connection,
+	Sunny,
+	Moon,
+	Link,
+	Refresh,
+	Key,
+	Monitor,
+	Timer,
+	Close,
+} from '@element-plus/icons-vue';
 
 const admin = ref(false);
 const appVersion = __APP_VERSION__;
@@ -384,87 +395,123 @@ async function manualCheckUpdate() {
 
 		<el-dialog
 			v-model="settingsVisible"
-			title="软件设置"
-			width="480px"
+			width="560px"
 			class="settings-dialog"
+			modal-class="settings-overlay"
+			:show-close="false"
 			destroy-on-close>
-			<el-form label-position="top">
-				<el-form-item label="默认网卡（启动时自动选中）">
+			<template #header>
+				<div class="settings-header">
+					<div class="settings-header-mark"><el-icon><Setting /></el-icon></div>
+					<div class="settings-header-copy">
+						<div class="settings-title">软件设置</div>
+					</div>
+					<el-button
+						class="settings-close"
+						:icon="Close"
+						circle
+						aria-label="关闭设置"
+						@click="settingsVisible = false" />
+				</div>
+			</template>
+			<div class="settings-content">
+				<section class="settings-section">
+					<div class="settings-section-heading">
+						<span class="settings-section-title">默认网卡</span>
+					</div>
 					<el-select
 						v-model="defaultAdapter"
-						placeholder="请选择默认网卡"
+						placeholder="请选择网卡"
 						clearable
-						:fit-input-width="false"
+						:fit-input-width="true"
 						popper-class="settings-select-popper"
-						style="width: 100%">
+						class="settings-default-select">
 						<el-option
 							v-for="a in adapters"
 							:key="a.name"
-							:label="`${a.name}（${a.description}）`"
-							:value="a.name" />
+							:label="a.name"
+							:value="a.name">
+							<div class="settings-adapter-option">
+								<span class="settings-adapter-option-name">{{ a.name }}</span>
+								<span class="settings-adapter-option-description">{{ a.description }}</span>
+							</div>
+						</el-option>
 					</el-select>
-				</el-form-item>
-				<el-form-item>
-					<div class="settings-inline-row">
-						<span class="settings-inline-label">点击关闭按钮时</span>
-						<el-radio-group v-model="closeAction">
-							<el-radio value="exit">直接退出软件</el-radio>
-							<el-radio value="tray">最小化到系统托盘</el-radio>
+				</section>
+
+				<section class="settings-section">
+					<div class="settings-section-heading">
+						<span class="settings-section-title">常规</span>
+					</div>
+					<div class="settings-close-card">
+						<span class="settings-close-label">点击关闭按钮时</span>
+						<el-radio-group v-model="closeAction" class="settings-close-radios">
+							<el-radio value="tray">最小化到托盘</el-radio>
+							<el-radio value="exit">退出软件</el-radio>
 						</el-radio-group>
 					</div>
-				</el-form-item>
-				<el-form-item>
-					<div class="settings-inline-row">
-						<span class="settings-inline-label">管理员权限</span>
-						<el-tag v-if="admin" type="success" size="small">已启用</el-tag>
-						<el-button
-							v-else
-							class="shortcut-btn"
-							:icon="Key"
-							@click="onRestartAsAdmin"
-							>启用管理员权限</el-button
-						>
-					</div>
-				</el-form-item>
-				<el-form-item>
-					<div class="settings-switch-row">
-						<div class="settings-switch-cell">
-							<span class="settings-switch-label">桌面挂件</span>
+					<div class="settings-toggle-grid">
+						<div class="settings-surface settings-toggle-card">
+							<div class="settings-item-icon"><el-icon><Monitor /></el-icon></div>
+							<div class="settings-item-copy"><strong>桌面挂件</strong></div>
 							<el-switch v-model="widgetVisible" size="small" />
 						</div>
-						<div class="settings-switch-cell">
-							<span class="settings-switch-label">开机自启</span>
+						<div class="settings-surface settings-toggle-card">
+							<div class="settings-item-icon"><el-icon><Timer /></el-icon></div>
+							<div class="settings-item-copy"><strong>开机自启</strong></div>
 							<el-switch v-model="autostart" size="small" />
 						</div>
-						<el-button
-							class="shortcut-btn"
-							:icon="Link"
-							:loading="shortcutBusy"
-							@click="onCreateShortcut"
-							>创建快捷方式</el-button
-						>
 					</div>
-				</el-form-item>
-				</el-form>
-				<template #footer>
-					<div class="settings-footer-row">
-						<el-badge :is-dot="true" :hidden="!updateAvailable">
+				</section>
+
+				<section class="settings-section">
+					<div class="settings-section-heading">
+						<span class="settings-section-title">权限</span>
+					</div>
+					<div class="settings-permission-grid">
+						<div class="settings-surface settings-permission-card">
+							<div class="settings-permission-mark" :class="{ enabled: admin }">
+								<el-icon><Key /></el-icon>
+							</div>
+							<div class="settings-permission-copy">
+								<div class="settings-permission-heading">
+									<strong>管理员权限</strong>
+								</div>
+								<span>修改 IP、DNS 和网卡状态</span>
+							</div>
+							<el-tag v-if="admin" type="success" effect="dark" round>已启用</el-tag>
 							<el-button
-								class="shortcut-btn"
-								:icon="Refresh"
-								:loading="checkingUpdate"
-								@click="manualCheckUpdate"
-								>检查更新</el-button
-							>
-						</el-badge>
-						<div class="settings-footer-actions">
-							<el-button @click="settingsVisible = false">取消</el-button>
-							<el-button type="primary" @click="saveDefaultAdapter"
-								>保存</el-button
-							>
+								v-else
+								class="settings-secondary-button"
+								:icon="Key"
+								@click="onRestartAsAdmin">启用</el-button>
 						</div>
+						<button
+							type="button"
+							class="settings-surface settings-shortcut-card"
+							:disabled="shortcutBusy"
+							@click="onCreateShortcut">
+							<span class="settings-item-icon"><el-icon><Link /></el-icon></span>
+							<span class="settings-shortcut-label">{{ shortcutBusy ? '创建中…' : '创建快捷方式' }}</span>
+						</button>
 					</div>
-				</template>
+				</section>
+			</div>
+			<template #footer>
+				<div class="settings-footer-row">
+					<el-badge :is-dot="true" :hidden="!updateAvailable">
+						<el-button
+							class="settings-update-button"
+							:icon="Refresh"
+							:loading="checkingUpdate"
+							@click="manualCheckUpdate">检查更新</el-button>
+					</el-badge>
+					<div class="settings-footer-actions">
+						<el-button class="settings-cancel-button" @click="settingsVisible = false">取消</el-button>
+						<el-button type="primary" class="settings-save-button" @click="saveDefaultAdapter">保存设置</el-button>
+					</div>
+				</div>
+			</template>
 		</el-dialog>
 
 		<UpdateDialog v-model:visible="updateVisible" :info="updateInfo" />
@@ -477,6 +524,7 @@ async function manualCheckUpdate() {
 	height: 100%;
 	display: flex;
 	flex-direction: column;
+	background: var(--app-bg);
 }
 .app-header {
 	display: flex;

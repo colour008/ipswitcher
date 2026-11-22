@@ -10,6 +10,9 @@ mod scanner;
 mod types;
 mod update;
 
+#[cfg(target_os = "windows")]
+pub mod single_instance;
+
 use config::{load_config, save_config};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{

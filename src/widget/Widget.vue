@@ -1385,6 +1385,7 @@ async function openMain() {
 .opacity-slider :deep(.el-slider__button) {
 	width: 8px;
 	height: 8px;
+  margin-bottom: 4px;
 	border: 2px solid #8db6ff;
 	background: #eaf2ff;
 	box-shadow: 0 0 0 2px rgba(76, 141, 255, 0.16);

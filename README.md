@@ -84,13 +84,13 @@ npm run app:build
 
 ## 下载产物
 
-最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.2.8 产物如下：
+最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.2.9 产物如下：
 
 | 产物 | 文件 | 说明 |
 | --- | --- | --- |
-| NSIS 安装包 | [IPSwitcher_2.2.8_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.8/IPSwitcher_2.2.8_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
-| 绿色便携版 | [IPSwitcher_v2.2.8_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.2.8/IPSwitcher_v2.2.8_portable.zip) | 解压即用，配置保存在程序同级目录 |
-| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.8/IPSwitcher.exe) | 单文件可执行程序 |
+| NSIS 安装包 | [IPSwitcher_2.2.9_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.9/IPSwitcher_2.2.9_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
+| 绿色便携版 | [IPSwitcher_v2.2.9_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.2.9/IPSwitcher_v2.2.9_portable.zip) | 解压即用，配置保存在程序同级目录 |
+| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.2.9/IPSwitcher.exe) | 单文件可执行程序 |
 
 ## 路线图
 
