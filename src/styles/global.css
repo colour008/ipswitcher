@@ -13,6 +13,8 @@
 	--accent-soft: #e5edf9;
 	--success: #16834c;
 	--danger: #f56c6c;
+	--update-accent: #d9823f;
+	--update-accent-soft: #fbf0e4;
 	--radius-sm: 8px;
 	--radius: 12px;
 	--shadow: none;
@@ -42,6 +44,8 @@ html.dark {
 	--accent-soft: #1d2a44;
 	--success: #4ade80;
 	--danger: #f56c6c;
+	--update-accent: #e89a63;
+	--update-accent-soft: rgba(232, 154, 99, 0.15);
 	--shadow: none;
 
 	/* 内部 Element 表面跟随卡片半透明，增强整体通透感 */
@@ -386,6 +390,18 @@ body {
 	background: var(--accent-soft);
 	color: var(--accent);
 }
+.settings-dialog .settings-update-button.el-button.has-update {
+	border-color: var(--settings-card-border);
+	background: var(--settings-card-bg);
+	color: var(--update-accent);
+	font-weight: 600;
+}
+.settings-dialog .settings-update-button.el-button.has-update:hover,
+.settings-dialog .settings-update-button.el-button.has-update:focus {
+	border-color: var(--update-accent);
+	background: var(--update-accent-soft);
+	color: var(--update-accent);
+}
 .settings-dialog .settings-secondary-button.el-button {
 	min-height: 31px;
 	padding: 0 10px;
@@ -494,6 +510,14 @@ body {
 	align-items: center;
 	justify-content: space-between;
 	gap: 10px;
+}
+.settings-dialog .settings-update-group {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.settings-dialog .settings-update-group .el-button + .el-button {
+	margin-left: 0;
 }
 .settings-dialog .settings-footer-actions {
 	display: flex;

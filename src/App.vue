@@ -50,6 +50,7 @@ import {
 	Minus,
 	FullScreen,
 	CopyDocument,
+	Download,
 } from '@element-plus/icons-vue';
 
 const admin = ref(false);
@@ -79,6 +80,13 @@ const bodyRef = ref<HTMLElement | null>(null);
 /// 调试模式下自绘的极简右键菜单（仅保留「检查元素」）；生产模式不显示任何菜单
 const devMenuVisible = ref(false);
 const devMenuPos = ref({ x: 0, y: 0 });
+
+/// 版本号展示：后端 tag_name 可能自带 v 前缀，统一为“至多一个 v”
+function displayVersion(v?: string | null): string {
+	const s = (v ?? '').trim();
+	if (!s) return '';
+	return /^[vV]/.test(s) ? s : `v${s}`;
+}
 
 function closeDevMenu() {
 	devMenuVisible.value = false;
@@ -412,6 +420,11 @@ async function manualCheckUpdate() {
 		checkingUpdate.value = false;
 	}
 }
+
+/// 已有更新时，从设置页打开更新弹窗进入下载流程
+function openUpdateDialog() {
+	updateVisible.value = true;
+}
 </script>
 
 <template>
@@ -439,12 +452,7 @@ async function manualCheckUpdate() {
 					<div class="brand-sub-row">
 						<span class="brand-separator" aria-hidden="true">·</span>
 						<span class="muted">网卡 IP 快速切换工具</span>
-						<el-badge
-							:is-dot="true"
-							:hidden="!updateAvailable"
-							class="version-badge">
-							<span class="brand-version">v{{ appVersion }}</span>
-						</el-badge>
+						<span class="brand-version">v{{ appVersion }}</span>
 					</div>
 				</div>
 			</div>
@@ -468,7 +476,7 @@ async function manualCheckUpdate() {
             content="软件设置"
             placement="bottom"
             popper-class="app-tip">
-          <el-badge :is-dot="true" :hidden="!updateAvailable">
+          <el-badge :is-dot="true" :hidden="!updateAvailable" class="settings-badge">
             <el-button
                 class="titlebar-action-button settings-trigger"
                 :icon="Setting"
@@ -641,13 +649,20 @@ async function manualCheckUpdate() {
 			</div>
 			<template #footer>
 				<div class="settings-footer-row">
-					<el-badge :is-dot="true" :hidden="!updateAvailable">
+					<div class="settings-update-group">
 						<el-button
 							class="settings-update-button"
 							:icon="Refresh"
 							:loading="checkingUpdate"
 							@click="manualCheckUpdate">检查更新</el-button>
-					</el-badge>
+						<el-button
+							v-if="updateAvailable"
+							class="settings-update-button has-update"
+							:icon="Download"
+							@click="openUpdateDialog">
+							下载 {{ displayVersion(updateInfo?.latestVersion) }}
+						</el-button>
+					</div>
 					<div class="settings-footer-actions">
 						<el-button class="settings-cancel-button" @click="settingsVisible = false">取消</el-button>
 						<el-button type="primary" class="settings-save-button" @click="saveDefaultAdapter">保存设置</el-button>
@@ -720,15 +735,16 @@ async function manualCheckUpdate() {
 	border-radius: var(--radius-sm);
 	padding: 2px 8px;
 }
-.version-badge {
-	display: inline-flex;
-	align-items: center;
-}
-/* 更新提示红点：贴在元素右上角内侧，去掉默认的向外平移 */
-:deep(.el-badge__content.is-fixed.is-dot) {
-	top: 2px;
-	right: 2px;
-	transform: none;
+/* 齿轮更新红点：缩小并贴合图标右上角齿尖，橙红色 */
+.settings-badge :deep(.el-badge__content.is-fixed.is-dot) {
+	width: 6px;
+	height: 6px;
+	border: none;
+	background: var(--update-accent);
+	box-shadow: 0 0 0 1px var(--panel-border);
+	top: 15px;
+	right: 15px;
+	transform: translate(50%, -50%);
 }
 .header-right {
 	height: 100%;
