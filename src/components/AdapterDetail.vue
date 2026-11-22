@@ -38,6 +38,32 @@ const editForm = reactive({
 
 const adapter = computed(() => currentAdapter());
 
+const adapterKind = computed(() => {
+	const identity = `${adapter.value?.name ?? ''} ${adapter.value?.description ?? ''}`.toLowerCase();
+	if (/bluetooth|蓝牙|personal area network|\bpan\b/.test(identity)) {
+		return { kind: 'bluetooth', label: '蓝牙网络' };
+	}
+	if (/wi-?fi|wlan|wireless|802\.11|无线网络|无线网卡/.test(identity)) {
+		return { kind: 'wifi', label: '无线网络' };
+	}
+	if (/cellular|mobile broadband|wwan|\b(?:4g|5g|lte|nr)\b|蜂窝网络|移动宽带/.test(identity)) {
+		return { kind: 'cellular', label: '移动网络' };
+	}
+	if (/rndis|usb tether|usb network|网络共享|usb 网卡/.test(identity)) {
+		return { kind: 'usb', label: 'USB 网络' };
+	}
+	if (/virtual|vmnet|hyper-v|\bvethernet\b|\btap\b|\btun\b|vpn|wireguard|openvpn|zerotier|tailscale|loopback|docker|wsl|虚拟网卡|虚拟以太网|隧道/.test(identity)) {
+		return { kind: 'virtual', label: '虚拟网络' };
+	}
+	if (/ethernet|有线|以太网|local area connection|\blan\b|\d+(?:\.\d+)?\s*gbe\b|\bgigabit\b|fast ethernet|realtek/.test(identity)) {
+		return { kind: 'wired', label: '有线网络' };
+	}
+	if (/\busb\b/.test(identity)) {
+		return { kind: 'usb', label: 'USB 网络' };
+	}
+	return { kind: 'default', label: '网络设备' };
+});
+
 function fillFromAdapter() {
 	const a = adapter.value;
 	if (!a) return;
@@ -327,8 +353,45 @@ async function saveProfile() {
 				<div class="current-info">
 					<div class="current-title">
 						<span
-							class="current-status-dot"
-							:class="adapter?.status === 'connected' ? 'is-connected' : 'is-disconnected'"></span>
+							class="current-kind-icon"
+							:class="[`kind-${adapterKind.kind}`, { 'is-disconnected': adapter?.status !== 'connected' }]"
+							:title="adapterKind.label"
+							:aria-label="adapterKind.label"
+							aria-hidden="false">
+							<svg v-if="adapterKind.kind === 'wired'" viewBox="0 0 24 24" aria-hidden="true">
+								<rect x="4" y="4" width="16" height="16" rx="3" />
+								<path d="M8 4v5m4-5v5m4-5v5M4 11h16M9 15h.01M12 15h.01M15 15h.01" />
+							</svg>
+							<svg v-else-if="adapterKind.kind === 'wifi'" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M4.5 9a12 12 0 0 1 15 0M7.5 12a7.5 7.5 0 0 1 9 0M10.5 15a3 3 0 0 1 3 0" />
+								<circle cx="12" cy="18" r="1" />
+							</svg>
+							<svg v-else-if="adapterKind.kind === 'bluetooth'" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="m7 7 10 10-5 4V3l5 4L7 17" />
+							</svg>
+							<svg v-else-if="adapterKind.kind === 'cellular'" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M4 20v-4m5 4v-7m5 7V9m5 11V4" />
+							</svg>
+							<svg v-else-if="adapterKind.kind === 'usb'" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M12 21V5m0 0L8.5 8.5M12 5l3.5 3.5M12 13l-4 4m4-4 4 4" />
+								<circle cx="12" cy="3" r="1.5" />
+								<rect x="14.5" y="16" width="3" height="3" rx=".5" />
+								<circle cx="7" cy="18" r="1.5" />
+							</svg>
+							<svg v-else-if="adapterKind.kind === 'virtual'" viewBox="0 0 24 24" aria-hidden="true">
+								<rect x="4" y="4" width="16" height="6" rx="2" />
+								<rect x="4" y="14" width="16" height="6" rx="2" />
+								<path d="M8 7h.01M8 17h.01M12 10v4" />
+							</svg>
+							<svg v-else viewBox="0 0 24 24" aria-hidden="true">
+								<circle cx="12" cy="12" r="3" />
+								<circle cx="5" cy="6" r="1.5" />
+								<circle cx="19" cy="6" r="1.5" />
+								<circle cx="5" cy="18" r="1.5" />
+								<circle cx="19" cy="18" r="1.5" />
+								<path d="m9.5 10-3-3m8 3 3-3m-8 7-3 3m8-3 3 3" />
+							</svg>
+						</span>
 						{{ adapter?.name || '未选择网卡' }}
 					</div>
 					<div class="current-desc muted">
@@ -347,6 +410,7 @@ async function saveProfile() {
 					</button>
 				</el-tooltip>
 			</div>
+			<div class="desc-frame">
 			<el-descriptions :column="2" border size="small" class="desc">
 				<el-descriptions-item label="获取方式">
 					<el-tag
@@ -388,6 +452,7 @@ async function saveProfile() {
 					<span>{{ adapter?.mac || '-' }}</span>
 				</el-descriptions-item>
 			</el-descriptions>
+			</div>
 		</div>
 
 		<div class="target-grid">
@@ -591,6 +656,15 @@ async function saveProfile() {
 	overflow: hidden;
 	background: linear-gradient(145deg, var(--panel-glass), var(--panel-bg));
 }
+.desc-frame {
+	border: 1px solid var(--description-border);
+	border-radius: 9px;
+	background: var(--panel-bg);
+	overflow: hidden;
+}
+.desc {
+	width: 100%;
+}
 .card-title {
 	font-size: 14px;
 	font-weight: 600;
@@ -615,18 +689,45 @@ async function saveProfile() {
 	font-size: 14px;
 	font-weight: 650;
 }
-.current-status-dot {
-	width: 8px;
-	height: 8px;
+.current-kind-icon {
+	display: inline-grid;
+	place-items: center;
+	width: 17px;
+	height: 17px;
 	flex: none;
-	border-radius: 50%;
 }
-.current-status-dot.is-connected {
-	background: var(--success);
-	box-shadow: 0 0 8px rgba(74, 222, 128, 0.35);
+.current-kind-icon svg {
+	width: 100%;
+	height: 100%;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	stroke-linejoin: round;
 }
-.current-status-dot.is-disconnected {
-	background: var(--text-secondary);
+.current-kind-icon.kind-wired {
+	color: #169b63;
+}
+.current-kind-icon.kind-wifi {
+	color: #3478e5;
+}
+.current-kind-icon.kind-bluetooth {
+	color: #7756d8;
+}
+.current-kind-icon.kind-cellular {
+	color: #0b91b2;
+}
+.current-kind-icon.kind-usb {
+	color: #138e9e;
+}
+.current-kind-icon.kind-virtual {
+	color: #8862d7;
+}
+.current-kind-icon.kind-default {
+	color: var(--text-secondary);
+}
+.current-kind-icon.is-disconnected {
+	opacity: 0.55;
 }
 .current-desc {
 	font-size: 12px;
@@ -640,19 +741,21 @@ async function saveProfile() {
 	width: 28px;
 	height: 28px;
 	padding: 0;
-	border: 1px solid var(--panel-border-glass);
+	border: 0;
 	background: transparent;
-	border-radius: 8px;
+	border-radius: 6px;
 	color: var(--text-secondary);
 	cursor: pointer;
 	transition:
 		color 0.15s,
-		background 0.15s,
-		border-color 0.15s;
+		background 0.15s;
 }
 .copy-btn:hover:not(:disabled) {
 	color: var(--accent);
-	background: var(--accent-soft);
+}
+.copy-btn:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
 }
 .copy-btn:disabled {
 	opacity: 0.4;
@@ -660,22 +763,35 @@ async function saveProfile() {
 }
 .desc :deep(.el-descriptions__label) {
 	width: 110px;
-	background: var(--app-bg);
+	background: var(--app-bg) !important;
 	color: var(--text-secondary);
 	font-size: 11px;
 	font-weight: 550;
 }
 .desc :deep(.el-descriptions__table) {
-	border-color: var(--panel-border);
-	border-radius: 8px;
-	overflow: hidden;
+	width: 100%;
+	border: 0;
+	border-collapse: collapse;
 }
 .desc :deep(.el-descriptions__cell) {
-	border-color: var(--panel-border);
+	border-color: var(--description-border) !important;
 	padding: 8px 12px;
 	font-size: 12px;
 }
+.desc :deep(.el-descriptions__table tr:first-child > td) {
+	border-top: 0 !important;
+}
+.desc :deep(.el-descriptions__table tr:last-child > td) {
+	border-bottom: 0 !important;
+}
+.desc :deep(.el-descriptions__table tr > td:first-child) {
+	border-left: 0 !important;
+}
+.desc :deep(.el-descriptions__table tr > td:last-child) {
+	border-right: 0 !important;
+}
 .desc :deep(.el-descriptions__content) {
+	background: var(--panel-bg) !important;
 	color: var(--text-primary);
 	font-variant-numeric: tabular-nums;
 }
@@ -713,6 +829,24 @@ async function saveProfile() {
 .target-form :deep(.el-form-item__label) {
 	padding-bottom: 2px;
 	font-size: 12px;
+}
+.target-form :deep(.el-input__wrapper),
+.dns-input :deep(.el-input__wrapper) {
+	background: var(--panel-bg) !important;
+	box-shadow: 0 0 0 1px var(--panel-border) inset;
+	transition: box-shadow 0.16s ease, background-color 0.16s ease;
+}
+.target-form :deep(.el-input__wrapper:hover),
+.dns-input :deep(.el-input__wrapper:hover) {
+	box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.target-form :deep(.el-input__wrapper.is-focus),
+.dns-input :deep(.el-input__wrapper.is-focus) {
+	box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px var(--accent-soft);
+}
+.target-form :deep(.el-input__inner),
+.dns-input :deep(.el-input__inner) {
+	color: var(--text-primary);
 }
 .dns-section {
 	display: flex;

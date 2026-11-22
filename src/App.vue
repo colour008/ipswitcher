@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import appIcon from '../src-tauri/icons/128x128.png';
 import { ElMessage, ElMessageBox, ElConfigProvider } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import {
@@ -37,7 +39,6 @@ import NetworkScan from '@/components/NetworkScan.vue';
 import UpdateDialog from '@/components/UpdateDialog.vue';
 import {
 	Setting,
-	Connection,
 	Sunny,
 	Moon,
 	Link,
@@ -46,11 +47,19 @@ import {
 	Monitor,
 	Timer,
 	Close,
+	Minus,
+	FullScreen,
+	CopyDocument,
 } from '@element-plus/icons-vue';
 
 const admin = ref(false);
 const appVersion = __APP_VERSION__;
 const settingsVisible = ref(false);
+const settingsPosition = ref<Record<string, string>>({
+	top: '48px',
+	right: '12px',
+	maxHeight: 'calc(100vh - 60px)',
+});
 const activeTab = ref('ip');
 const defaultAdapter = ref('');
 const closeAction = ref<'exit' | 'tray'>('tray');
@@ -63,6 +72,8 @@ const updateAvailable = ref(false);
 const checkingUpdate = ref(false);
 const sidebarWidth = ref(350);
 const theme = ref<'light' | 'dark'>('dark');
+const mainWindow = getCurrentWindow();
+const windowMaximized = ref(false);
 const bodyRef = ref<HTMLElement | null>(null);
 
 /// 调试模式下自绘的极简右键菜单（仅保留「检查元素」）；生产模式不显示任何菜单
@@ -108,16 +119,72 @@ function onDocKeydown(e: KeyboardEvent) {
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 520;
 
-function applyTheme(t: 'light' | 'dark') {
-	theme.value = t;
-	document.documentElement.classList.toggle('dark', t === 'dark');
-	void setWindowTheme(t === 'dark');
+function applyTheme(
+	t: 'light' | 'dark',
+	revealFrom?: { x: number; y: number },
+) {
+	const update = () => {
+		theme.value = t;
+		document.documentElement.classList.toggle('dark', t === 'dark');
+		void setWindowTheme(t === 'dark');
+	};
+	if (!revealFrom || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+		update();
+		return;
+	}
+	const transitionDocument = document as Document & {
+		startViewTransition?: (callback: () => void) => { finished: Promise<void> };
+	};
+	if (!transitionDocument.startViewTransition) {
+		update();
+		return;
+	}
+	const root = document.documentElement;
+	const farthestX = Math.max(revealFrom.x, window.innerWidth - revealFrom.x);
+	const farthestY = Math.max(revealFrom.y, window.innerHeight - revealFrom.y);
+	root.style.setProperty('--theme-origin-x', `${revealFrom.x}px`);
+	root.style.setProperty('--theme-origin-y', `${revealFrom.y}px`);
+	root.style.setProperty(
+		'--theme-reveal-radius',
+		`${Math.hypot(farthestX, farthestY) + 24}px`,
+	);
+	const transition = transitionDocument.startViewTransition(update);
+	void transition.finished
+		.catch(() => undefined)
+		.finally(() => {
+			root.style.removeProperty('--theme-origin-x');
+			root.style.removeProperty('--theme-origin-y');
+			root.style.removeProperty('--theme-reveal-radius');
+		});
 }
 
-function toggleTheme() {
-	applyTheme(theme.value === 'dark' ? 'light' : 'dark');
-	appConfig.value.theme = theme.value;
+function toggleTheme(event: MouseEvent) {
+	const nextTheme = theme.value === 'dark' ? 'light' : 'dark';
+	applyTheme(nextTheme, {
+		x: event.clientX,
+		y: event.clientY,
+	});
+	appConfig.value.theme = nextTheme;
 	void saveConfig(appConfig.value);
+}
+
+async function toggleMaximize() {
+	windowMaximized.value = await mainWindow.isMaximized();
+	if (windowMaximized.value) {
+		await mainWindow.unmaximize();
+	} else {
+		await mainWindow.maximize();
+	}
+	windowMaximized.value = await mainWindow.isMaximized();
+}
+
+async function syncWindowMaximized() {
+	windowMaximized.value = await mainWindow.isMaximized();
+}
+
+function onTitlebarDoubleClick(event: MouseEvent) {
+	if ((event.target as HTMLElement).closest('button, .header-right')) return;
+	void toggleMaximize();
 }
 
 async function init() {
@@ -140,9 +207,19 @@ async function init() {
 }
 
 let adaptersUnlisten: UnlistenFn | null = null;
+let windowStateUnlisten: UnlistenFn | null = null;
+let windowStateSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
 onMounted(async () => {
 	await init();
+	await syncWindowMaximized();
+	windowStateUnlisten = await mainWindow.onResized(() => {
+		if (windowStateSyncTimer) clearTimeout(windowStateSyncTimer);
+		windowStateSyncTimer = setTimeout(() => {
+			void syncWindowMaximized();
+			windowStateSyncTimer = null;
+		}, 100);
+	});
 	// 先处理权限询问（内部已吞掉取消/异常），结束后再静默检查更新，避免弹窗叠加
 	await promptAdminIfNeeded();
 	void silentCheckUpdate();
@@ -152,6 +229,7 @@ onMounted(async () => {
 	);
 	document.addEventListener('pointerdown', onDocPointerDown);
 	document.addEventListener('keydown', onDocKeydown);
+	window.addEventListener('resize', updateSettingsPosition);
 });
 
 let dragging = false;
@@ -186,7 +264,10 @@ onUnmounted(() => {
 	window.removeEventListener('pointerup', stopDrag);
 	document.removeEventListener('pointerdown', onDocPointerDown);
 	document.removeEventListener('keydown', onDocKeydown);
+	window.removeEventListener('resize', updateSettingsPosition);
 	if (adaptersUnlisten) void adaptersUnlisten();
+	if (windowStateUnlisten) void windowStateUnlisten();
+	if (windowStateSyncTimer) clearTimeout(windowStateSyncTimer);
 });
 
 async function openSettings() {
@@ -200,6 +281,29 @@ async function openSettings() {
 		autostart.value = appConfig.value.autostart ?? true;
 	}
 	settingsVisible.value = true;
+	await nextTick();
+	updateSettingsPosition();
+}
+
+function updateSettingsPosition() {
+	if (!settingsVisible.value) return;
+	const anchor = document.querySelector<HTMLElement>('.settings-trigger');
+	if (!anchor) return;
+	const rect = anchor.getBoundingClientRect();
+	const dialogWidth = Math.min(440, window.innerWidth - 24);
+	const maxRight = Math.max(12, window.innerWidth - dialogWidth - 12);
+	const anchorRight = Math.max(12, window.innerWidth - rect.right);
+	const right = Math.min(anchorRight, maxRight);
+	const top = Math.max(
+		8,
+		Math.min(rect.bottom + 6, window.innerHeight - 320),
+	);
+	settingsPosition.value = {
+		top: `${top}px`,
+		right: `${right}px`,
+		width: `${dialogWidth}px`,
+		maxHeight: `${window.innerHeight - top - 12}px`,
+	};
 }
 
 async function saveDefaultAdapter() {
@@ -324,14 +428,16 @@ async function manualCheckUpdate() {
 				</div>
 			</div>
 		</teleport>
-		<header class="app-header">
-			<div class="brand">
-				<div class="brand-logo">
-					<Connection :size="20" />
-				</div>
+		<header
+			class="app-header"
+			data-tauri-drag-region
+			@dblclick="onTitlebarDoubleClick">
+			<div class="brand" data-tauri-drag-region>
+				<img class="brand-logo" :src="appIcon" alt="IPSwitcher" />
 				<div class="brand-text">
 					<div class="brand-title">IPSwitcher</div>
 					<div class="brand-sub-row">
+						<span class="brand-separator" aria-hidden="true">·</span>
 						<span class="muted">网卡 IP 快速切换工具</span>
 						<el-badge
 							:is-dot="true"
@@ -343,28 +449,63 @@ async function manualCheckUpdate() {
 				</div>
 			</div>
 			<div class="header-right">
-				<el-tag :type="admin ? 'success' : 'warning'" size="small">
+				<el-tag
+					class="header-admin-tag"
+					:type="admin ? 'success' : 'warning'"
+					size="small">
 					{{ admin ? '管理员权限' : '标准权限' }}
 				</el-tag>
 				<el-tooltip
-					:content="
-						theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'
-					"
+					:content="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'"
 					placement="bottom"
 					popper-class="app-tip">
 					<el-button
+						class="titlebar-action-button theme-toggle-button"
 						:icon="theme === 'dark' ? Sunny : Moon"
-						circle
 						@click="toggleTheme" />
 				</el-tooltip>
-				<el-tooltip
-					content="软件设置"
-					placement="bottom"
-					popper-class="app-tip">
-					<el-badge :is-dot="true" :hidden="!updateAvailable">
-						<el-button :icon="Setting" circle @click="openSettings" />
-					</el-badge>
-				</el-tooltip>
+        <el-tooltip
+            content="软件设置"
+            placement="bottom"
+            popper-class="app-tip">
+          <el-badge :is-dot="true" :hidden="!updateAvailable">
+            <el-button
+                class="titlebar-action-button settings-trigger"
+                :icon="Setting"
+                @click="openSettings" />
+          </el-badge>
+        </el-tooltip>
+				<div class="window-controls">
+					<el-tooltip content="最小化" placement="bottom" popper-class="app-tip">
+						<button
+							class="window-control"
+							aria-label="最小化"
+							@click="mainWindow.minimize()">
+							<el-icon><Minus /></el-icon>
+						</button>
+					</el-tooltip>
+					<el-tooltip
+						:content="windowMaximized ? '还原' : '最大化'"
+						placement="bottom"
+						popper-class="app-tip">
+						<button
+							class="window-control"
+							:aria-label="windowMaximized ? '还原' : '最大化'"
+							@click="toggleMaximize">
+							<el-icon>
+								<component :is="windowMaximized ? CopyDocument : FullScreen" />
+							</el-icon>
+						</button>
+					</el-tooltip>
+					<el-tooltip content="关闭" placement="bottom" popper-class="app-tip">
+						<button
+							class="window-control close-control"
+							aria-label="关闭"
+							@click="mainWindow.close()">
+							<el-icon><Close /></el-icon>
+						</button>
+					</el-tooltip>
+				</div>
 			</div>
 		</header>
 
@@ -395,7 +536,8 @@ async function manualCheckUpdate() {
 
 		<el-dialog
 			v-model="settingsVisible"
-			width="560px"
+			width="440px"
+			:style="settingsPosition"
 			class="settings-dialog"
 			modal-class="settings-overlay"
 			:show-close="false"
@@ -525,12 +667,15 @@ async function manualCheckUpdate() {
 	display: flex;
 	flex-direction: column;
 	background: var(--app-bg);
+	border: 1px solid var(--panel-border);
 }
 .app-header {
+	height: 40px;
+	flex: none;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 10px 14px;
+	padding: 0 0 0 12px;
 	border-bottom: 1px solid var(--panel-border);
 }
 .brand {
@@ -539,32 +684,41 @@ async function manualCheckUpdate() {
 	gap: 8px;
 }
 .brand-logo {
-	width: 32px;
-	height: 32px;
-	border-radius: var(--radius-sm);
-	background: var(--accent-soft);
-	color: var(--accent);
+	width: 18px;
+	height: 18px;
+	flex: none;
+	object-fit: contain;
+}
+.brand-text {
+	min-width: 0;
 	display: flex;
 	align-items: center;
-	justify-content: center;
+	gap: 6px;
 }
 .brand-title {
-	font-weight: 700;
-	font-size: 16px;
+	font-weight: 600;
+	font-size: 13px;
+	line-height: 1.2;
+	white-space: nowrap;
 }
 .brand-sub-row {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	font-size: 12px;
+	font-size: 10px;
+	white-space: nowrap;
+}
+.brand-separator {
+	color: var(--text-secondary);
+	opacity: 0.72;
 }
 .brand-version {
-	font-size: 11px;
+	font-size: 10px;
 	line-height: 1.4;
 	color: var(--text-secondary);
 	background: var(--accent-soft);
 	border-radius: var(--radius-sm);
-	padding: 1px 6px;
+	padding: 2px 8px;
 }
 .version-badge {
 	display: inline-flex;
@@ -577,9 +731,69 @@ async function manualCheckUpdate() {
 	transform: none;
 }
 .header-right {
+	height: 100%;
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	gap: 1px;
+	-webkit-app-region: no-drag;
+}
+.header-right :deep(*) {
+	-webkit-app-region: no-drag;
+}
+.header-right :deep(.header-admin-tag.el-tag) {
+	height: 22px;
+	padding: 0 6px;
+	border-radius: 6px;
+	font-size: 11px;
+	line-height: 20px;
+}
+.header-right :deep(.titlebar-action-button.el-button) {
+	width: 40px;
+	height: 40px;
+	flex: none;
+	margin: 0;
+	padding: 0;
+	border: 0 !important;
+	border-radius: 0;
+	background: transparent !important;
+	box-shadow: none !important;
+	color: var(--text-secondary);
+}
+.header-right :deep(.titlebar-action-button.el-button:hover) {
+	border: 0 !important;
+	background: color-mix(in srgb, var(--text-primary) 9%, transparent) !important;
+	color: var(--text-primary);
+}
+.window-controls {
+	height: 100%;
+	display: flex;
+	align-items: stretch;
+	margin-left: -1px;
+}
+.window-control {
+	width: 44px;
+	height: 40px;
+	display: grid;
+	place-items: center;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+.window-control .el-icon {
+	font-size: 14px;
+}
+.window-control:hover {
+	background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+	color: var(--text-primary);
+}
+.window-control.close-control {
+	width: 48px;
+}
+.window-control.close-control:hover {
+	background: #c42b1c;
+	color: #fff;
 }
 .app-body {
 	flex: 1;

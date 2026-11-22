@@ -271,18 +271,20 @@ function openNetworkPanel() {
 
 <template>
 	<div class="list-panel panel">
+		<div class="list-title">网卡列表</div>
 		<div class="list-header">
 			<el-input
 				v-model="keyword"
 				placeholder="搜索网卡名称 / 描述"
 				:prefix-icon="Search"
 				clearable
-				size="default" />
+				size="small" />
 			<el-tooltip
 				content="刷新网卡列表"
 				placement="top"
 				popper-class="app-tip">
 				<el-button
+					class="list-refresh"
 					:icon="Refresh"
 					:loading="refreshing"
 					circle
@@ -446,6 +448,19 @@ function openNetworkPanel() {
 }
 .list-header .el-input {
 	flex: 1;
+}
+.list-header :deep(.el-input__wrapper) {
+	background-color: var(--panel-bg) !important;
+}
+.list-title {
+	flex: none;
+	padding: 0 2px;
+	font-size: 13px;
+	font-weight: 650;
+	letter-spacing: 0.02em;
+}
+.list-header :deep(.list-refresh.el-button) {
+	background-color: transparent;
 }
 .list-body {
 	flex: 1;
@@ -655,10 +670,6 @@ function openNetworkPanel() {
 	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28) !important;
 	padding: 12px 14px !important;
 	max-width: min(420px, calc(100vw - 32px)) !important;
-}
-.adapter-tip .el-popper__arrow::before {
-	background-color: var(--panel-bg) !important;
-	border-color: var(--panel-border) !important;
 }
 .adapter-tip .tip-info {
 	width: min(390px, calc(100vw - 64px));

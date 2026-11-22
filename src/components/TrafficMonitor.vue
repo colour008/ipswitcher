@@ -209,11 +209,10 @@ onUnmounted(() => {
 	<section class="traffic-card panel">
 		<div class="traffic-header">
 			<div class="traffic-heading">
-				<span class="traffic-mark"><span></span></span>
 				<span class="traffic-title">流量监控</span>
 			</div>
 			<div class="traffic-controls">
-				<span class="monitor-state" :class="{ unavailable }">
+				<span class="monitor-state" :class="{ unavailable, 'is-live': session && !unavailable }">
 					<i></i>{{ unavailable ? '暂不可用' : session ? '实时监测' : reading ? '连接中' : '等待数据' }}
 				</span>
 				<el-tooltip content="重置本次累计" placement="top" popper-class="app-tip">
@@ -273,22 +272,7 @@ onUnmounted(() => {
 .traffic-heading {
 	gap: 8px;
 }
-.traffic-mark {
-	display: grid;
-	place-items: center;
-	width: 22px;
-	height: 22px;
-	border: 1px solid rgba(76, 141, 255, 0.18);
-	border-radius: 7px;
-	background: var(--accent-soft);
-}
-.traffic-mark span {
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--accent);
-	box-shadow: 0 0 8px rgba(76, 141, 255, 0.45);
-}
+
 .traffic-title {
 	font-size: 13px;
 	font-weight: 650;
@@ -311,6 +295,22 @@ onUnmounted(() => {
 	border-radius: 50%;
 	background: currentColor;
 }
+.monitor-state.is-live i {
+	animation: monitor-pulse 1.8s ease-in-out infinite;
+}
+@keyframes monitor-pulse {
+	0%,
+	100% {
+		opacity: 0.65;
+		transform: scale(0.85);
+		box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 24%, transparent);
+	}
+	50% {
+		opacity: 1;
+		transform: scale(1.15);
+		box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 0%, transparent);
+	}
+}
 .monitor-state.unavailable {
 	color: var(--danger);
 }
@@ -319,21 +319,28 @@ onUnmounted(() => {
 	place-items: center;
 	width: 25px;
 	height: 25px;
-	border: 1px solid var(--panel-border);
-	border-radius: 7px;
+	border: 0;
+	border-radius: 6px;
 	background: transparent;
 	color: var(--text-secondary);
 	cursor: pointer;
-	transition: color 0.15s, background 0.15s, border-color 0.15s;
+	transition: color 0.15s, background 0.15s;
 }
 .reset-button:hover:not(:disabled) {
-	border-color: var(--accent);
-	background: var(--accent-soft);
 	color: var(--accent);
+}
+.reset-button:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
 }
 .reset-button:disabled {
 	opacity: 0.45;
 	cursor: not-allowed;
+}
+@media (prefers-reduced-motion: reduce) {
+	.monitor-state.is-live i {
+		animation: none;
+	}
 }
 .traffic-adapter {
 	margin-top: 5px;
