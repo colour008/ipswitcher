@@ -2,13 +2,15 @@ import { createApp } from "vue";
 import {
 	ElButton,
 	ElIcon,
-	ElOption,
-	ElSelect,
 	ElSlider,
 	ElTag,
 	ElTooltip,
 } from "element-plus";
-import "element-plus/dist/index.css";
+import "element-plus/es/components/button/style/css";
+import "element-plus/es/components/message/style/css";
+import "element-plus/es/components/slider/style/css";
+import "element-plus/es/components/tag/style/css";
+import "element-plus/es/components/tooltip/style/css";
 import "element-plus/theme-chalk/dark/css-vars.css";
 import Widget from "./Widget.vue";
 import "@/styles/global.css";
@@ -23,7 +25,7 @@ document.head.appendChild(reset);
 const app = createApp(Widget);
 
 // 按需注册挂件实际使用的 Element Plus 组件
-[ElButton, ElIcon, ElOption, ElSelect, ElSlider, ElTag, ElTooltip].forEach(
+[ElButton, ElIcon, ElSlider, ElTag, ElTooltip].forEach(
 	(comp) => app.use(comp)
 );
 

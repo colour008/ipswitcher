@@ -356,6 +356,10 @@ body {
 .settings-dialog .settings-close-radios .el-radio {
 	margin-right: 0;
 }
+html:not(.dark) :is(.settings-dialog .settings-close-radios, .form-col .mode-radio) .el-radio {
+	--el-radio-input-bg-color: transparent;
+	--el-radio-input-border: var(--el-border-width) var(--el-border-style) #aab5c2;
+}
 .settings-dialog .settings-close-radios .el-radio__label {
 	color: var(--text-primary);
 	font-size: 11px;
@@ -370,6 +374,9 @@ body {
 }
 .settings-dialog .settings-toggle-card .el-switch {
 	flex: none;
+}
+.settings-dialog .settings-traffic-card {
+	grid-column: 1 / -1;
 }
 .settings-dialog .settings-secondary-button.el-button,
 .settings-dialog .settings-update-button.el-button,

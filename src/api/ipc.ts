@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
-  AdapterInfo,
+  AdapterSnapshot,
   AdapterTrafficCounters,
   AppConfig,
   IpProfile,
@@ -13,9 +14,11 @@ import type {
   UpdateProgress,
 } from "@/types";
 
-export const listAdapters = () => invoke<AdapterInfo[]>("list_adapters");
-export const getAdapterTraffic = (name: string) =>
-  invoke<AdapterTrafficCounters>("get_adapter_traffic", { name });
+export const listAdapters = (force: boolean) =>
+  invoke<AdapterSnapshot>("list_adapters", { force });
+export const scheduleAdapterRefresh = () => invoke<void>("schedule_adapter_refresh");
+export const getAdapterTraffic = (name: string, ifIndex: number | null) =>
+  invoke<AdapterTrafficCounters>("get_adapter_traffic", { name, ifIndex });
 
 export const applyStatic = (input: StaticInput) =>
   invoke<string>("apply_static", { input });
@@ -52,11 +55,11 @@ export const runHostScan = (taskId: string, adapter: string, ip: string, mask: s
 export const stopHostScan = (taskId: string) =>
   invoke<void>("stop_host_scan", { taskId });
 
-export const onScanHostResult = (cb: (p: ScanHostResult) => void) =>
-  listen<ScanHostResult>("scan-host-result", (e) => cb(e.payload));
+export const onScanHostResults = (cb: (p: ScanHostResult[]) => void) =>
+  getCurrentWindow().listen<ScanHostResult[]>("scan-host-results", (e) => cb(e.payload));
 
 export const onScanDone = (cb: (p: ScanDoneResult) => void) =>
-  listen<ScanDoneResult>("scan-done", (e) => cb(e.payload));
+  getCurrentWindow().listen<ScanDoneResult>("scan-done", (e) => cb(e.payload));
 
 export const elevateAction = (action: PendingAction) =>
   invoke<void>("elevate_action", { action });
@@ -69,8 +72,11 @@ export const shouldPromptAdmin = () => invoke<boolean>("should_prompt_admin");
 
 export const getConfig = () => invoke<AppConfig>("get_config");
 
-export const saveConfig = (config: AppConfig) =>
-  invoke<void>("save_config_cmd", { config });
+export const saveConfig = (config: AppConfig, trafficMonitorEnabled?: boolean) =>
+  invoke<void>("save_config_cmd", { config, trafficMonitorEnabled });
+
+export const onTrafficMonitorChanged = (cb: (enabled: boolean) => void) =>
+  listen<boolean>("traffic-monitor-changed", (e) => cb(e.payload));
 
 export const checkAdmin = () => invoke<boolean>("check_admin");
 
@@ -82,6 +88,15 @@ export const setWindowTheme = (dark: boolean) =>
 export const showWidget = () => invoke<void>("show_widget");
 
 export const hideWidget = () => invoke<void>("hide_widget");
+export const restoreMainWindow = () => invoke<void>("restore_main_window");
+export const getWidgetPinned = () => invoke<boolean>("widget_pinned");
+export const setWidgetAdapter = (name: string) => invoke<void>("set_widget_adapter", { name });
+
+export const onMainVisibilityChanged = (cb: (visible: boolean) => void) =>
+  getCurrentWindow().listen<boolean>("main-visibility-changed", (e) => cb(e.payload));
+
+export const onWidgetAdapterChanged = (cb: (name: string) => void) =>
+  getCurrentWindow().listen<string>("widget-adapter-changed", (e) => cb(e.payload));
 
 export const setWidgetOpacity = (opacity: number) =>
   invoke<void>("set_widget_opacity", { opacity });
@@ -105,14 +120,9 @@ export function onWidgetPinChanged(cb: (pinned: boolean) => void): Promise<Unlis
   return listen<boolean>("widget-pin-changed", (e) => cb(e.payload));
 }
 
-/// 广播网卡信息已变化，挂件收到后刷新
-export function emitAdaptersChanged() {
-  void emit("adapters-changed", null);
-}
-
-/// 挂件订阅网卡变化事件
-export function onAdaptersChanged(cb: () => void): Promise<UnlistenFn> {
-  return listen("adapters-changed", () => cb());
+/// 两个窗口直接复用后端发布的网卡快照。
+export function onAdaptersChanged(cb: (snapshot: AdapterSnapshot) => void): Promise<UnlistenFn> {
+  return listen<AdapterSnapshot>("adapters-changed", (e) => cb(e.payload));
 }
 
 /// 广播配置（方案 / 默认网卡等）已变化，挂件收到后重载配置
@@ -132,13 +142,13 @@ export type TrayResultPayload = { ok: boolean; message: string };
 export function onDiagLine(
   cb: (p: DiagLinePayload) => void
 ): Promise<UnlistenFn> {
-  return listen<DiagLinePayload>("diag-line", (e) => cb(e.payload));
+  return getCurrentWindow().listen<DiagLinePayload>("diag-line", (e) => cb(e.payload));
 }
 
 export function onDiagDone(
   cb: (p: DiagDonePayload) => void
 ): Promise<UnlistenFn> {
-  return listen<DiagDonePayload>("diag-done", (e) => cb(e.payload));
+  return getCurrentWindow().listen<DiagDonePayload>("diag-done", (e) => cb(e.payload));
 }
 
 export function onTrayApplyResult(

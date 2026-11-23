@@ -1,6 +1,6 @@
 {
   "name": "ipswitcher",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "private": true,
   "description": "网卡 IP 快速切换工具（Tauri v2 + Vue3 + TypeScript + Element Plus）",
   "author": "JamHoo",

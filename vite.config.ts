@@ -32,7 +32,7 @@ export default defineConfig({
     target: "es2021",
     minify: "esbuild",
     sourcemap: false,
-    emptyOutDir: false,
+    emptyOutDir: true,
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),

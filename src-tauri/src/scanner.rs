@@ -1,4 +1,4 @@
-use crate::config::{load_config, save_config};
+use crate::config::{load_host_history, update_host_history};
 use crate::encoding::decode_bytes;
 use crate::process::suppress_window;
 use crate::types::HostHistory;
@@ -7,7 +7,7 @@ use std::net::Ipv4Addr;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 static SCANS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
@@ -49,6 +49,7 @@ fn hosts_for_subnet(ip: &str, mask: &str) -> Result<(Vec<String>, String), Strin
     }
 
     let hosts = (start..=end)
+        .filter(|&n| n != ip_num(ip))
         .map(|n| Ipv4Addr::from(n).to_string())
         .collect();
     let network = format!("{}/{}", Ipv4Addr::from(network_n), prefix);
@@ -117,7 +118,7 @@ fn lookup_mac(ip: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn run_host_scan(
+pub async fn run_host_scan(
     app: AppHandle,
     task_id: String,
     adapter: String,
@@ -128,6 +129,12 @@ pub fn run_host_scan(
     if hosts.is_empty() {
         return Err("该网段没有可扫描的其他主机地址".to_string());
     }
+    let previous: HashMap<String, HostHistory> = load_host_history(&app)
+        .map_err(|e| format!("读取扫描历史失败：{e}"))?
+        .into_iter()
+        .filter(|h| h.adapter == adapter && h.network == network)
+        .map(|h| (h.ip.clone(), h))
+        .collect();
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut active = scans().lock().map_err(|_| "扫描状态不可用".to_string())?;
@@ -138,15 +145,8 @@ pub fn run_host_scan(
     }
 
     std::thread::spawn(move || {
-        let initial_config = load_config(&app);
-        let previous: HashMap<String, HostHistory> = initial_config
-            .host_history
-            .iter()
-            .filter(|h| h.adapter == adapter && h.network == network)
-            .map(|h| (h.ip.clone(), h.clone()))
-            .collect();
         let queue = Arc::new(Mutex::new(VecDeque::from(hosts)));
-        let workers = 48usize.min(queue.lock().map(|q| q.len()).unwrap_or(0)).max(1);
+        let workers = 16usize.min(queue.lock().map(|q| q.len()).unwrap_or(0)).max(1);
         let (tx, rx) = std::sync::mpsc::channel::<(String, bool, Option<String>, Option<String>)>();
         let mut joins = Vec::with_capacity(workers);
 
@@ -170,6 +170,8 @@ pub fn run_host_scan(
 
         let mut scanned = 0usize;
         let mut online = Vec::new();
+        let mut batch = Vec::with_capacity(32);
+        let mut last_sent = Instant::now();
         for (host, responsive, hostname, mac) in rx {
             scanned += 1;
             let previous_host = previous.get(&host);
@@ -191,48 +193,64 @@ pub fn run_host_scan(
             } else {
                 "undiscovered"
             };
-            let _ = app.emit(
-                "scan-host-result",
-                serde_json::json!({
+            batch.push(serde_json::json!({
                     "task_id": task_id.clone(),
                     "ip": host,
                     "status": status,
                     "last_seen": last_seen,
                     "hostname": hostname,
                     "mac": mac,
-                }),
-            );
+            }));
+            if batch.len() >= 32 || last_sent.elapsed() >= Duration::from_millis(60) {
+                let _ = app.emit_to("main", "scan-host-results", &batch);
+                batch.clear();
+                last_sent = Instant::now();
+            }
+        }
+        if !batch.is_empty() {
+            let _ = app.emit_to("main", "scan-host-results", &batch);
         }
         for join in joins {
             let _ = join.join();
         }
 
         let timestamp = now();
-        let mut config = load_config(&app);
-        for (host, seen_at, hostname, mac) in online {
-            if let Some(existing) = config.host_history.iter_mut().find(|h| {
-                h.adapter == adapter && h.network == network && h.ip == host
-            }) {
-                existing.last_seen = seen_at;
-                existing.hostname = hostname;
-                existing.mac = mac;
-            } else {
-                config.host_history.push(HostHistory {
-                    adapter: adapter.clone(),
-                    network: network.clone(),
-                    ip: host,
-                    last_seen: seen_at,
-                    hostname,
-                    mac,
-                });
-            }
-        }
-        let error = save_config(&app, &config).err();
+        let error = if online.is_empty() {
+            None
+        } else {
+            update_host_history(&app, |history| {
+                let mut indexes: HashMap<String, usize> = history.iter().enumerate()
+                    .filter(|(_, h)| h.adapter == adapter && h.network == network)
+                    .map(|(index, h)| (h.ip.clone(), index))
+                    .collect();
+                for (host, seen_at, hostname, mac) in online {
+                    if let Some(&index) = indexes.get(&host) {
+                        let existing = &mut history[index];
+                        if seen_at >= existing.last_seen {
+                            existing.last_seen = seen_at;
+                            existing.hostname = hostname;
+                            existing.mac = mac;
+                        }
+                    } else {
+                        indexes.insert(host.clone(), history.len());
+                        history.push(HostHistory {
+                            adapter: adapter.clone(),
+                            network: network.clone(),
+                            ip: host,
+                            last_seen: seen_at,
+                            hostname,
+                            mac,
+                        });
+                    }
+                }
+            }).err()
+        };
         let cancelled = cancel.load(Ordering::Relaxed);
         if let Ok(mut active) = scans().lock() {
             active.remove(&task_id);
         }
-        let _ = app.emit(
+        let _ = app.emit_to(
+            "main",
             "scan-done",
             serde_json::json!({
                 "task_id": task_id.clone(),

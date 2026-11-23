@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { currentAdapter } from '@/composables/useStore';
 import {
 	onScanDone,
-	onScanHostResult,
+	onScanHostResults,
 	runHostScan,
 	stopHostScan,
 } from '@/api/ipc';
 import type { ScanDoneResult, ScanHostResult } from '@/types';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { useScopedListeners } from '@/composables/useScopedListeners';
 
 type HostRow = {
 	ip: string;
@@ -37,8 +37,16 @@ const filterItems = [
 ] as const;
 const search = ref('');
 const error = ref('');
-let unlistenHost: UnlistenFn | null = null;
-let unlistenDone: UnlistenFn | null = null;
+const ready = ref(false);
+const registerListener = useScopedListeners();
+const rowIndexes = new Map<string, number>();
+const pendingResults: ScanHostResult[] = [];
+let batchTimer: number | undefined;
+const ROW_HEIGHT = 34;
+const OVERSCAN = 6;
+const hostList = ref<HTMLElement | null>(null);
+const scrollTop = ref(0);
+const listHeight = ref(0);
 
 function ipv4Number(ip: string): number | null {
 	const parts = ip.split('.').map(Number);
@@ -80,33 +88,52 @@ function subnetHosts(ip: string, mask: string): string[] {
 }
 
 onMounted(async () => {
-	unlistenHost = await onScanHostResult((result) => {
-		if (result.task_id !== taskId.value) return;
-		const row = rows.value.find((x) => x.ip === result.ip);
-		if (row) {
-			row.status = result.status;
-			row.last_seen = result.last_seen;
-			row.hostname = result.hostname;
-			row.mac = result.mac;
-		}
-	});
-	unlistenDone = await onScanDone((result: ScanDoneResult) => {
-		if (result.task_id !== taskId.value) return;
-		running.value = false;
-		if (result.error)
-			error.value = `扫描完成，但历史记录保存失败：${result.error}`;
-		else if (result.cancelled)
-			ElMessage.info(`扫描已停止，已检查 ${result.scanned} 个地址`);
-		else ElMessage.success(`扫描完成，共检查 ${result.scanned} 个地址`);
-	});
+	try {
+		await Promise.all([
+			registerListener(onScanHostResults((results) => {
+				if (results[0]?.task_id !== taskId.value) return;
+				pendingResults.push(...results);
+				if (pendingResults.length >= 128) flushResults();
+				else batchTimer ??= window.setTimeout(flushResults, 80);
+			})),
+			registerListener(onScanDone((result: ScanDoneResult) => {
+				if (result.task_id !== taskId.value) return;
+				flushResults();
+				running.value = false;
+				if (result.error)
+					error.value = `扫描完成，但历史记录保存失败：${result.error}`;
+				else if (result.cancelled)
+					ElMessage.info(`扫描已停止，已检查 ${result.scanned} 个地址`);
+				else ElMessage.success(`扫描完成，共检查 ${result.scanned} 个地址`);
+			})),
+		]);
+		ready.value = true;
+	} catch (cause) {
+		error.value = String(cause);
+	}
 });
 
 onUnmounted(() => {
-	unlistenHost?.();
-	unlistenDone?.();
+	window.clearTimeout(batchTimer);
+	if (running.value) void stopHostScan(taskId.value).catch(() => undefined);
 });
 
+function flushResults() {
+	window.clearTimeout(batchTimer);
+	batchTimer = undefined;
+	for (const result of pendingResults.splice(0)) {
+		const index = rowIndexes.get(result.ip);
+		if (index === undefined) continue;
+		const row = rows.value[index];
+		row.status = result.status;
+		row.last_seen = result.last_seen;
+		row.hostname = result.hostname;
+		row.mac = result.mac;
+	}
+}
+
 async function startScan() {
+	if (!ready.value || running.value) return;
 	const a = adapter.value;
 	if (!a) return;
 	const ip = a.ipv4.find((x) => ipv4Number(x) !== null);
@@ -125,6 +152,8 @@ async function startScan() {
 	scannedAdapterDescription.value = a.description;
 	scannedIp.value = ip;
 	scannedMask.value = mask;
+	rowIndexes.clear();
+	hosts.forEach((host, index) => rowIndexes.set(host, index));
 	rows.value = hosts.map((host) => ({
 		ip: host,
 		status: 'scanning',
@@ -134,6 +163,7 @@ async function startScan() {
 	}));
 	error.value = '';
 	filter.value = 'all';
+	resetScroll();
 	running.value = true;
 	try {
 		await runHostScan(taskId.value, a.name, ip, mask);
@@ -148,22 +178,45 @@ async function stopScan() {
 	await stopHostScan(taskId.value);
 }
 
-const counts = computed(() => ({
-	all: rows.value.length,
-	online: rows.value.filter((r) => r.status === 'online').length,
-	offline: rows.value.filter((r) => r.status === 'offline').length,
-	undiscovered: rows.value.filter((r) => r.status === 'undiscovered').length,
-	scanning: rows.value.filter((r) => r.status === 'scanning').length,
-}));
+const counts = computed(() => {
+	const total = { all: rows.value.length, online: 0, offline: 0, undiscovered: 0, scanning: 0 };
+	for (const row of rows.value) total[row.status]++;
+	return total;
+});
 
 const visibleRows = computed(() => {
 	const kw = search.value.trim();
+	if (filter.value === 'all' && !kw) return rows.value;
 	return rows.value.filter(
 		(row) =>
 			(filter.value === 'all' || row.status === filter.value) &&
 			(!kw || row.ip.includes(kw)),
 	);
 });
+
+const firstVisibleRow = computed(() => Math.max(
+	0,
+	Math.min(Math.floor(scrollTop.value / ROW_HEIGHT), visibleRows.value.length - 1) - OVERSCAN,
+));
+const lastVisibleRow = computed(() => Math.min(
+	visibleRows.value.length,
+	firstVisibleRow.value + Math.ceil(listHeight.value / ROW_HEIGHT) + OVERSCAN * 2 + 1,
+));
+const renderedRows = computed(() => visibleRows.value.slice(firstVisibleRow.value, lastVisibleRow.value));
+
+function resetScroll() {
+	scrollTop.value = 0;
+	if (hostList.value) hostList.value.scrollTop = 0;
+}
+
+watch([filter, search], resetScroll);
+watch(hostList, (list, _previous, onCleanup) => {
+	if (!list) return;
+	const observer = new ResizeObserver(() => { listHeight.value = list.clientHeight; });
+	listHeight.value = list.clientHeight;
+	observer.observe(list);
+	onCleanup(() => observer.disconnect());
+}, { flush: 'post' });
 
 function statusLabel(status: HostRow['status']): string {
 	return status === 'online'
@@ -224,7 +277,7 @@ function formatSeen(value: number | null): string {
 				<div class="scan-actions">
 					<el-button
 						type="primary"
-						:disabled="!adapter"
+						:disabled="!adapter || !ready"
 						:loading="running"
 						@click="startScan">
 						{{
@@ -283,7 +336,11 @@ function formatSeen(value: number | null): string {
 			<div v-else-if="!visibleRows.length" class="scan-empty muted">
 				没有符合条件的地址。
 			</div>
-			<div v-else class="host-list">
+			<div
+				v-else
+				ref="hostList"
+				class="host-list"
+				@scroll.passive="scrollTop = ($event.currentTarget as HTMLElement).scrollTop">
 				<div class="host-row host-header">
 					<span></span>
 					<span>IP 地址</span>
@@ -292,7 +349,8 @@ function formatSeen(value: number | null): string {
 					<span>状态</span>
 					<span class="host-seen">最近在线</span>
 				</div>
-				<div v-for="row in visibleRows" :key="row.ip" class="host-row">
+				<div aria-hidden="true" :style="{ height: firstVisibleRow * ROW_HEIGHT + 'px' }"></div>
+				<div v-for="row in renderedRows" :key="row.ip" class="host-row">
 					<span class="host-dot" :class="`dot-${row.status}`"></span>
 					<code class="host-ip">{{ row.ip }}</code>
 					<span class="host-value" :title="row.hostname || ''">{{
@@ -314,6 +372,7 @@ function formatSeen(value: number | null): string {
 									: '—'
 					}}</span>
 				</div>
+				<div aria-hidden="true" :style="{ height: (visibleRows.length - lastVisibleRow) * ROW_HEIGHT + 'px' }"></div>
 			</div>
 		</section>
 	</div>
@@ -372,7 +431,6 @@ function formatSeen(value: number | null): string {
 	font-size: 16px;
 	font-weight: 700;
 }
-.scan-subtitle,
 .scan-note {
 	font-size: 12px;
 	margin-top: 4px;
@@ -453,16 +511,11 @@ function formatSeen(value: number | null): string {
 	flex: 1;
 	min-height: 0;
 }
-.card-title {
-	font-weight: 600;
-}
-.card-title .muted {
-	font-size: 12px;
-	font-weight: 400;
-	margin-left: 6px;
-}
 .scan-search {
 	width: 180px;
+}
+html:not(.dark) .scan-search {
+	--el-input-bg-color: transparent;
 }
 .scan-search :deep(.el-input__inner) {
 	font-size: 12px;
@@ -478,7 +531,8 @@ function formatSeen(value: number | null): string {
 	width: 100%;
 }
 .host-row {
-	min-height: 34px;
+	box-sizing: border-box;
+	height: 34px;
 	display: grid;
 	grid-template-columns:
 		14px minmax(105px, 1fr) minmax(110px, 1.1fr) minmax(145px, 1.25fr)

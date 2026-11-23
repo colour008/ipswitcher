@@ -1,6 +1,7 @@
-use crate::types::AppConfig;
+use crate::types::{AppConfig, HostHistory};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 /// 是否位于标准受保护安装目录（Program Files / Windows），据此判定为安装版
@@ -115,4 +116,51 @@ pub fn save_config(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
     let path = config_path(app);
     let text = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
     fs::write(&path, text).map_err(|e| format!("配置写入失败：{e}"))
+}
+
+static HOST_HISTORY_LOCK: Mutex<()> = Mutex::new(());
+
+fn history_path(app: &AppHandle) -> PathBuf {
+    config_path(app).with_file_name("host-history.json")
+}
+
+pub fn load_host_history(app: &AppHandle) -> Result<Vec<HostHistory>, String> {
+    match fs::read(history_path(app)) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(load_config(app).host_history),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn write_host_history(app: &AppHandle, history: &[HostHistory]) -> Result<(), String> {
+    let path = history_path(app);
+    let temporary = path.with_extension("json.tmp");
+    let data = serde_json::to_vec(history).map_err(|e| e.to_string())?;
+    fs::write(&temporary, data).map_err(|e| e.to_string())?;
+    fs::rename(temporary, path).map_err(|e| e.to_string())
+}
+
+pub fn migrate_host_history(app: &AppHandle) -> Result<(), String> {
+    let mut config = load_config(app);
+    if config.host_history.is_empty() {
+        return Ok(());
+    }
+    // 若上次在写入新文件后退出，验证新文件后即可继续清理旧字段。
+    if history_path(app).try_exists().map_err(|e| e.to_string())? {
+        let _ = load_host_history(app)?;
+    } else {
+        write_host_history(app, &config.host_history)?;
+    }
+    config.host_history.clear();
+    save_config(app, &config)
+}
+
+pub fn update_host_history(
+    app: &AppHandle,
+    update: impl FnOnce(&mut Vec<HostHistory>),
+) -> Result<(), String> {
+    let _guard = HOST_HISTORY_LOCK.lock().map_err(|_| "扫描历史不可用".to_string())?;
+    let mut history = load_host_history(app)?;
+    update(&mut history);
+    write_host_history(app, &history)
 }

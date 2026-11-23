@@ -17,7 +17,6 @@ import {
 } from '@element-plus/icons-vue';
 import {
 	getCurrentWindow,
-	getAllWindows,
 	LogicalSize,
 	LogicalPosition,
 } from '@tauri-apps/api/window';
@@ -27,24 +26,30 @@ import {
 	getAdapterTraffic,
 	elevateAction,
 	getConfig,
-	listAdapters,
+	getWidgetPinned,
 	onAdaptersChanged,
-	emitAdaptersChanged,
 	onConfigChanged,
-	saveConfig,
+	onTrafficMonitorChanged,
+	restoreMainWindow,
+	setWidgetAdapter,
 	setWidgetOpacity,
 	saveWidgetSize,
 	setWidgetPinned,
 	onWidgetPinChanged,
 	openDevTools,
 } from '@/api/ipc';
-import type { AdapterInfo, AppConfig, IpProfile, PendingAction } from '@/types';
-import { normalizeConfig } from '@/composables/useStore';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { AppConfig, IpProfile, PendingAction } from '@/types';
+import { adapters, applyAdapterSnapshot, normalizeConfig, refreshAdapters, scheduleDelayedRefresh } from '@/composables/useStore';
+import { useScopedListeners } from '@/composables/useScopedListeners';
 
-const adapters = ref<AdapterInfo[]>([]);
+const win = getCurrentWindow();
+const registerListener = useScopedListeners();
 const currentName = ref<string | null>(null);
-const appConfig = ref<AppConfig>({ default_adapter: null, profiles: [] });
+const appConfig = ref<AppConfig | null>(null);
+const trafficMonitorPreference = ref<boolean>();
+const trafficMonitorEnabled = computed(() => appConfig.value !== null
+	&& (trafficMonitorPreference.value ?? appConfig.value.traffic_monitor_enabled ?? true));
+let configRequest = 0;
 const applying = ref<null | 'dhcp' | 'static'>(null);
 /// 背景不透明度（0.0 ~ 1.0），仅作用于卡片背景，字体始终保持不透明
 const opacity = ref<number>(0.92);
@@ -64,6 +69,8 @@ const uploadRate = ref(0);
 const downloadRate = ref(0);
 let trafficTimer: number | undefined;
 let trafficSampling = false;
+let disposed = false;
+let trafficGeneration = 0;
 let trafficBaseline: {
 	name: string;
 	sent: number;
@@ -76,18 +83,10 @@ const styleVars = computed(() => ({
 	'--widget-bg-alpha': opacity.value,
 	'--root-border-alpha': 0.12 * opacity.value,
 	'--select-bg-alpha': 0.035 * opacity.value,
-	'--select-border-alpha': 0.14 * opacity.value,
-	'--btn-bg-alpha': 0.03 * opacity.value,
-	'--btn-border-alpha': Math.max(0.1, 0.1 * opacity.value),
-	'--primary-bg-alpha': 0.9 * opacity.value,
-	'--primary-border-alpha': Math.max(0.45, 0.9 * opacity.value),
-	'--panel-border-alpha': 0.055 * opacity.value,
 }));
 
 /// 网卡菜单展开期间临时扩展窗口底部，不将临时尺寸写入配置
 let selectGeom: { x: number; y: number; w: number; h: number } | null = null;
-/// 浮层开合引起的尺寸/位置变化不落盘
-let suppressPersist = false;
 
 const adapter = computed(
 	() => adapters.value.find((a) => a.name === currentName.value) ?? null,
@@ -97,37 +96,30 @@ const adapter = computed(
 const staticProfile = computed<IpProfile | null>(() => {
 	if (!adapter.value) return null;
 	return (
-		appConfig.value.profiles.find(
+		appConfig.value?.profiles.find(
 			(p) => p.mode === 'static' && p.ip && p.mask,
 		) ?? null
 	);
 });
 
-async function refresh() {
-	adapters.value = await listAdapters();
-	if (
-		!currentName.value ||
-		!adapters.value.some((a) => a.name === currentName.value)
-	) {
-		currentName.value =
-			appConfig.value.widget_adapter ??
-			appConfig.value.default_adapter ??
-			adapters.value[0]?.name ??
-			null;
-	}
-	// 注意：挂件自身刷新后不再广播 adapters-changed，避免主窗/挂件互相触发形成刷新环
+function selectAvailableAdapter(...names: (string | null | undefined)[]) {
+	currentName.value = names.find((name) => adapters.value.some((a) => a.name === name))
+		?? adapters.value[0]?.name ?? null;
 }
 
 /// 每秒读取所选网卡的系统累计计数，并用相邻采样差计算实时速率
 async function sampleTraffic() {
-	const name = currentName.value;
-	if (!name || trafficSampling) return;
+	const selected = adapter.value;
+	if (!trafficMonitorEnabled.value || !selected || trafficSampling || disposed || document.hidden) return;
+	const { name, if_index } = selected;
+	const generation = trafficGeneration;
 	trafficSampling = true;
 	try {
-		const counters = await getAdapterTraffic(name);
-		const now = Date.now();
-		if (currentName.value !== name) return;
+		const counters = await getAdapterTraffic(name, if_index);
+		const now = counters.sampled_at;
+		if (generation !== trafficGeneration) return;
 		if (trafficBaseline?.name === name) {
+			if (now === trafficBaseline.at) return;
 			const elapsed = (now - trafficBaseline.at) / 1000;
 			const sent = Math.max(
 				0,
@@ -151,7 +143,7 @@ async function sampleTraffic() {
 			at: now,
 		};
 	} catch {
-		if (currentName.value === name) {
+		if (generation === trafficGeneration) {
 			uploadRate.value = 0;
 			downloadRate.value = 0;
 			trafficBaseline = null;
@@ -175,43 +167,31 @@ function formatTrafficRate(value: number): string {
 	return `${amount.toFixed(amount >= 100 ? 0 : 1)} ${units[unit]}`;
 }
 
-let widgetTimers: number[] = [];
-
-/// 切换配置后立即 + 延时两次刷新本地列表，最后一次刷新后广播给主窗，等待 DHCP 租约 / IP 配置收敛
 function scheduleWidgetRefresh() {
-	void refresh();
-	widgetTimers.forEach((t) => window.clearTimeout(t));
-	widgetTimers = [];
-	const delays = [1500, 3500];
-	delays.forEach((ms, i) => {
-		const t = window.setTimeout(() => {
-			const last = i === delays.length - 1;
-			void refresh().then(() => {
-				if (last) emitAdaptersChanged();
-			});
-		}, ms);
-		widgetTimers.push(t);
-	});
+	void refreshAdapters().catch(() => undefined);
+	scheduleDelayedRefresh();
 }
 
-async function init() {
-	appConfig.value = normalizeConfig(await getConfig());
-	opacity.value = appConfig.value.widget_opacity ?? 0.92;
-	await refresh();
+function syncTrafficTimer() {
+	trafficGeneration++;
+	trafficBaseline = null;
+	uploadRate.value = 0;
+	downloadRate.value = 0;
+	window.clearInterval(trafficTimer);
+	trafficTimer = undefined;
+	if (!trafficMonitorEnabled.value || !currentName.value || document.hidden || disposed) return;
 	void sampleTraffic();
 	trafficTimer = window.setInterval(() => void sampleTraffic(), 1000);
 }
 
-/// 主窗保存方案 / 默认网卡后，重载本地配置并刷新网卡列表
 async function reloadConfig() {
-	appConfig.value = normalizeConfig(await getConfig());
-	opacity.value = appConfig.value.widget_opacity ?? 0.92;
-	await refresh();
-	// 主窗显式设置默认网卡后，挂件跟随切换到该网卡（网卡存在才生效）
-	const def = appConfig.value.default_adapter;
-	if (def && adapters.value.some((a) => a.name === def)) {
-		currentName.value = def;
-	}
+	const request = ++configRequest;
+	const config = normalizeConfig(await getConfig());
+	if (disposed || request !== configRequest) return;
+	const firstLoad = appConfig.value === null;
+	appConfig.value = config;
+	opacity.value = config.widget_opacity ?? 0.92;
+	if (!firstLoad) selectAvailableAdapter(config.default_adapter, currentName.value, config.widget_adapter);
 }
 
 /// 调试模式自绘右键菜单（仅「检查元素」）；生产模式不显示菜单
@@ -261,69 +241,55 @@ function onDocKeydown(e: KeyboardEvent) {
 	closeDevMenu();
 }
 
-function chooseAdapter(name: string) {
-	currentName.value = name;
+async function chooseAdapter(name: string) {
 	selectOpen.value = false;
+	if (name === currentName.value) return;
+	try {
+		await setWidgetAdapter(name);
+		currentName.value = name;
+	} catch (error) {
+		ElMessage.error(String(error));
+	}
 }
 
-onMounted(init);
-
-let unlisten: UnlistenFn | null = null;
-let pinUnlisten: UnlistenFn | null = null;
-let configUnlisten: UnlistenFn | null = null;
-
 onMounted(async () => {
-	unlisten = await onAdaptersChanged(() => void refresh());
-	configUnlisten = await onConfigChanged(() => void reloadConfig());
-	pinUnlisten = await onWidgetPinChanged((p) => {
-		pinned.value = p;
-	});
 	document.addEventListener('pointerdown', onDocPointerDown);
 	document.addEventListener('keydown', onDocKeydown);
-	// 监听窗口尺寸变化，缩放停止后防抖把尺寸写回配置
-	const win = getCurrentWindow();
-	let sizeTimer: number | null = null;
-	await win.onResized(() => {
-		if (sizeTimer) window.clearTimeout(sizeTimer);
-		sizeTimer = window.setTimeout(() => void persistSize(), 250);
-	});
+	document.addEventListener('visibilitychange', syncTrafficTimer);
+	try {
+		await Promise.all([
+			registerListener(onAdaptersChanged(applyAdapterSnapshot)),
+			registerListener(onConfigChanged(() => void reloadConfig().catch(() => undefined))),
+			registerListener(onTrafficMonitorChanged((enabled) => { trafficMonitorPreference.value = enabled; })),
+			registerListener(onWidgetPinChanged((p) => { pinned.value = p; })),
+		]);
+		const [, currentPin] = await Promise.all([reloadConfig(), getWidgetPinned()]);
+		if (disposed) return;
+		pinned.value = currentPin;
+		await refreshAdapters(false);
+		if (disposed) return;
+		selectAvailableAdapter(appConfig.value?.widget_adapter, appConfig.value?.default_adapter, currentName.value);
+	} catch (error) {
+		if (!disposed) ElMessage.error(String(error));
+	}
 });
 
 onUnmounted(() => {
-	if (trafficTimer !== undefined) window.clearInterval(trafficTimer);
-	if (unlisten) void unlisten();
-	if (pinUnlisten) void pinUnlisten();
-	if (configUnlisten) void configUnlisten();
+	disposed = true;
+	syncTrafficTimer();
+	cancelPointerGesture?.();
 	document.removeEventListener('pointerdown', onDocPointerDown);
 	document.removeEventListener('keydown', onDocKeydown);
-	widgetTimers.forEach((t) => window.clearTimeout(t));
-	widgetTimers = [];
+	document.removeEventListener('visibilitychange', syncTrafficTimer);
 });
 
-watch(currentName, async (name) => {
-	if (!name) return;
-	trafficBaseline = null;
-	uploadRate.value = 0;
-	downloadRate.value = 0;
-	void sampleTraffic();
-	appConfig.value.widget_adapter = name;
-	// 挂件选中的网卡同时作为默认网卡，便于主窗口与快速切换联动
-	appConfig.value.default_adapter = name;
-	await saveConfig(appConfig.value);
+watch(adapters, () => {
+	selectAvailableAdapter(currentName.value, appConfig.value?.widget_adapter, appConfig.value?.default_adapter);
 });
 
-async function persistSize() {
-	// 下拉展开期间窗口处于临时扩窗态，不把临时尺寸落盘
-	if (suppressPersist || selectGeom) return;
-	const win = getCurrentWindow();
-	const size = await win.innerSize();
-	const scale = await win.scaleFactor();
-	// 高度固定基线，仅宽度参与持久化
-	await saveWidgetSize(size.width / scale, BASE_HEIGHT);
-}
+watch([trafficMonitorEnabled, currentName], syncTrafficTimer);
 
 async function captureGeom() {
-	const win = getCurrentWindow();
 	const [scale, size, pos] = await Promise.all([
 		win.scaleFactor(),
 		win.innerSize(),
@@ -348,7 +314,6 @@ function adapterMenuHeight() {
 
 /// 网卡菜单在底部向下展开，临时扩展窗口底边；该过程不落盘
 watch(selectOpen, async (open) => {
-	const win = getCurrentWindow();
 	if (open) {
 		if (!selectGeom) selectGeom = await captureGeom();
 		if (!selectOpen.value || !selectGeom) {
@@ -368,30 +333,22 @@ watch(selectOpen, async (open) => {
 			rootRect && menuRect
 				? Math.max(0, Math.ceil(menuRect.bottom - rootRect.bottom))
 				: adapterMenuHeight() + 6;
-		suppressPersist = true;
 		await win.setSize(new LogicalSize(g.w, g.h + menuSpace));
 		await win.setPosition(new LogicalPosition(g.x, g.y));
-		window.setTimeout(() => {
-			if (selectOpen.value) suppressPersist = false;
-		}, 300);
 	} else if (selectGeom) {
 		const g = selectGeom;
-		suppressPersist = true;
 		await win.setSize(new LogicalSize(g.w, g.h));
 		await win.setPosition(new LogicalPosition(g.x, g.y));
 		selectGeom = null;
-		window.setTimeout(() => {
-			suppressPersist = false;
-		}, 300);
 	}
 });
 
 async function onOpacityChange(v: number) {
-	opacity.value = v;
-	appConfig.value.widget_opacity = v;
-	await saveConfig(appConfig.value);
-	// 持久化到后端配置（保持命令契约，便于重启后恢复背景透明度）
-	await setWidgetOpacity(v);
+	try {
+		await setWidgetOpacity(v);
+	} catch (error) {
+		ElMessage.error(String(error));
+	}
 }
 
 async function handleApplyError(e: unknown) {
@@ -448,7 +405,6 @@ async function applyStaticNow() {
 	}
 	const p = staticProfile.value;
 	if (!p) {
-		suppressPersist = true;
 		showNoProfile.value = true;
 		return;
 	}
@@ -471,59 +427,80 @@ async function applyStaticNow() {
 	}
 }
 
-/// 阈值拖拽：单击保留按钮/下拉等控件交互，按住移动超过阈值才拖动窗口，组件内任意位置均可拖动
+let cancelPointerGesture: (() => void) | undefined;
+
+function trackPointer(pointerId: number, move: (event: PointerEvent) => void, finish: () => void, cancel?: () => void) {
+	cancelPointerGesture?.();
+	const onMove = (event: PointerEvent) => {
+		if (event.pointerId === pointerId) move(event);
+	};
+	const onEnd = (event: PointerEvent) => {
+		if (event.pointerId !== pointerId) return;
+		cleanup();
+		finish();
+	};
+	const cleanup = () => {
+		window.removeEventListener('pointermove', onMove);
+		window.removeEventListener('pointerup', onEnd);
+		window.removeEventListener('pointercancel', onEnd);
+		window.removeEventListener('blur', onCancel);
+		cancelPointerGesture = undefined;
+	};
+	const onCancel = () => {
+		cleanup();
+		cancel?.();
+	};
+	cancelPointerGesture = onCancel;
+	window.addEventListener('pointermove', onMove);
+	window.addEventListener('pointerup', onEnd);
+	window.addEventListener('pointercancel', onEnd);
+	window.addEventListener('blur', onCancel);
+}
+
+/// 阈值拖拽：超过阈值后交给系统移动窗口。
 function onDragStart(e: PointerEvent) {
 	if (pinned.value) return;
 	if (e.button !== 0) return;
 	const el = e.target as HTMLElement;
 	// 控件自身保留点击/拖动交互，不参与窗口拖动
 	if (el.closest('button, .adapter-picker, .el-slider, .el-button')) return;
-	const start = { x: e.clientX, y: e.clientY, moved: false };
-	const onMove = (ev: PointerEvent) => {
-		if (!start || start.moved) return;
-		if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 5) {
-			start.moved = true;
-			void getCurrentWindow().startDragging();
+	trackPointer(e.pointerId, (event) => {
+		if (Math.hypot(event.clientX - e.clientX, event.clientY - e.clientY) > 5) {
+			cancelPointerGesture?.();
+			void win.startDragging().catch(() => undefined);
 		}
-	};
-	const onUp = () => {
-		window.removeEventListener('pointermove', onMove);
-		window.removeEventListener('pointerup', onUp);
-	};
-	window.addEventListener('pointermove', onMove);
-	window.addEventListener('pointerup', onUp);
+	}, () => undefined);
 }
 
 /// 右侧热区手动横向拖拽：仅改宽度、高度固定基线（系统原生缩放已关闭，不调用 startResizeDragging）
 function onResizeStart(e: PointerEvent) {
-	if (pinned.value) return;
+	if (pinned.value || selectOpen.value || showNoProfile.value || e.button !== 0) return;
 	e.preventDefault();
 	e.stopPropagation();
-	const win = getCurrentWindow();
-	void (async () => {
-		const scale = await win.scaleFactor();
-		const size = await win.innerSize();
-		const startX = e.clientX;
-		const startW = size.width / scale;
-		const onMove = (ev: PointerEvent) => {
-			const dx = (ev.clientX - startX) / scale;
-			const w = Math.min(WIDTH_MAX, Math.max(WIDTH_MIN, startW + dx));
-			void win.setSize(new LogicalSize(w, BASE_HEIGHT));
-		};
-		const onUp = () => {
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-			void persistSize();
-		};
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
-	})();
+	(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+	const startX = e.screenX;
+	const startWidth = window.innerWidth;
+	let width = startWidth;
+	let frame = 0;
+	let moved = false;
+	const resize = () => {
+		frame = 0;
+		return win.setSize(new LogicalSize(width, BASE_HEIGHT));
+	};
+	trackPointer(e.pointerId, (event) => {
+		width = Math.min(WIDTH_MAX, Math.max(WIDTH_MIN, startWidth + event.screenX - startX));
+		moved = true;
+		if (!frame) frame = requestAnimationFrame(() => void resize().catch(() => undefined));
+	}, () => {
+		cancelAnimationFrame(frame);
+		if (!moved) return;
+		void resize().then(() => saveWidgetSize(width, BASE_HEIGHT))
+			.catch((error) => ElMessage.error(String(error)));
+	}, () => cancelAnimationFrame(frame));
 }
 
-/// 关闭无方案提示框，并恢复尺寸落盘
 function closeNoProfile() {
 	showNoProfile.value = false;
-	suppressPersist = false;
 }
 
 async function copyInfo() {
@@ -548,12 +525,7 @@ async function togglePin() {
 }
 
 async function openMain() {
-	const wins = await getAllWindows();
-	const main = wins.find((w) => w.label === 'main');
-	if (main) {
-		await main.show();
-		await main.setFocus();
-	}
+	await restoreMainWindow();
 }
 </script>
 
@@ -595,7 +567,7 @@ async function openMain() {
 								:step="0.05"
 								placement="top"
 								size="small"
-								@input="onOpacityChange" />
+								@change="onOpacityChange" />
 						</el-tooltip>
 					</div>
 					<div class="info-actions">
@@ -679,7 +651,7 @@ async function openMain() {
 					</div>
 				</div>
 
-				<div v-if="adapter" class="detail-grid">
+				<div v-if="adapter" class="detail-grid" :class="{ 'without-traffic': !trafficMonitorEnabled }">
 					<div class="info-list">
 						<div class="info-row">
 							<span class="info-label">IPv4</span
@@ -704,7 +676,7 @@ async function openMain() {
 							><span>{{ adapter.dns[1] || '-' }}</span>
 						</div>
 					</div>
-					<div class="traffic-panel">
+					<div v-if="trafficMonitorEnabled" class="traffic-panel">
 						<div
 							class="traffic-metric traffic-up"
 							:title="`上行 ${formatTrafficRate(uploadRate)}`">
@@ -1152,6 +1124,10 @@ async function openMain() {
 	min-height: 72px;
 }
 
+.detail-grid.without-traffic {
+	grid-template-columns: minmax(0, 1fr);
+}
+
 .info-row {
 	display: flex;
 	align-items: center;
@@ -1388,22 +1364,31 @@ async function openMain() {
   margin-bottom: 4px;
 	border: 2px solid #8db6ff;
 	background: #eaf2ff;
-	box-shadow: 0 0 0 2px rgba(76, 141, 255, 0.16);
+	position: relative;
+}
+.opacity-slider :deep(.el-slider__button::after) {
+	content: '';
+	position: absolute;
+	inset: -5px;
+	border-radius: 50%;
+	background: rgba(76, 141, 255, 0.32);
+	pointer-events: none;
 	animation: opacity-handle-pulse 2.4s ease-in-out infinite;
 }
 
 @keyframes opacity-handle-pulse {
 	0%,
 	100% {
-		box-shadow:
-			0 0 0 2px rgba(76, 141, 255, 0.14),
-			0 0 5px rgba(76, 141, 255, 0.22);
+		opacity: 0.35;
+		transform: scale(0.8);
 	}
 	50% {
-		box-shadow:
-			0 0 0 4px rgba(76, 141, 255, 0.22),
-			0 0 10px rgba(76, 141, 255, 0.42);
+		opacity: 0.8;
+		transform: scale(1.4);
 	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.opacity-slider :deep(.el-slider__button::after) { animation: none; }
 }
 
 /* 边缘缩放热区 */

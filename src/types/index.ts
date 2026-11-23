@@ -15,9 +15,15 @@ export interface AdapterInfo {
 }
 
 /** Network interface counters reported by Windows. */
+export interface AdapterSnapshot {
+  revision: number;
+  adapters: AdapterInfo[];
+}
+
 export interface AdapterTrafficCounters {
   sent_bytes: number;
   received_bytes: number;
+  sampled_at: number;
 }
 
 /** 保存的 IP 方案 */
@@ -42,6 +48,7 @@ export interface AppConfig {
   close_action?: "exit" | "tray" | null;
   autostart?: boolean | null;
   widget_visible?: boolean | null;
+  traffic_monitor_enabled?: boolean | null;
   widget_adapter?: string | null;
   widget_opacity?: number | null;
   widget_width?: number | null;
@@ -50,17 +57,6 @@ export interface AppConfig {
   /** 启动管理员询问是否已选“暂不”（true 后不再自动弹窗，可在设置页手动启用） */
   admin_prompt_dismissed?: boolean | null;
   elevate_on_startup?: boolean | null;
-  host_history?: HostHistory[];
-}
-
-/** Previously responsive hosts, used to distinguish offline from never discovered. */
-export interface HostHistory {
-  adapter: string;
-  network: string;
-  ip: string;
-  last_seen: number;
-  hostname?: string | null;
-  mac?: string | null;
 }
 
 export interface ScanHostResult {

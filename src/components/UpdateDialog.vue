@@ -2,6 +2,8 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { ElProgress } from 'element-plus';
+import 'element-plus/es/components/progress/style/css';
 import {
   downloadUpdate,
   cancelDownload,
@@ -89,7 +91,8 @@ watch(
     } else {
       cleanupProgress();
     }
-  }
+  },
+  { immediate: true }
 );
 
 async function startUpdate() {

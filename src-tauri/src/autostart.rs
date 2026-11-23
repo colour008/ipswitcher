@@ -73,11 +73,10 @@ pub fn apply(app: &AppHandle, enabled: bool) -> Result<(), String> {
     }
     let mut cfg = load_config(app);
     cfg.autostart = Some(enabled);
-    let _ = save_config(app, &cfg);
     if let Some(menu) = app.try_state::<AutostartMenu>() {
         let _ = menu.0.set_checked(enabled);
     }
-    Ok(())
+    save_config(app, &cfg)
 }
 
 #[tauri::command]

@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
 	runDiagnostic,
 	stopDiagnostic,
 	onDiagLine,
 	onDiagDone,
-	type UnlistenFn,
 } from '@/api/ipc';
+import { useScopedListeners } from '@/composables/useScopedListeners';
 
 interface Preset {
 	key: string;
 	label: string;
-	needTarget: boolean;
+	needTarget?: boolean;
 	placeholder?: string;
 	defaultTarget?: string;
 }
@@ -22,6 +22,17 @@ interface Token {
 	cls: string;
 }
 
+interface OutputLine {
+	id: number;
+	text: string;
+	cls: string;
+	tokens: Token[];
+}
+
+const MAX_OUTPUT_LINES = 1500;
+const OUTPUT_BATCH_MS = 80;
+const OUTPUT_BATCH_LIMIT = 128;
+const registerListener = useScopedListeners();
 const presets: Preset[] = [
 	{ key: 'ipconfig_all', label: 'ipconfig /all' },
 	{
@@ -55,10 +66,13 @@ const activePreset = ref('ipconfig_all');
 const target = ref('');
 const extraArgs = ref('');
 const running = ref(false);
-const lines = ref<string[]>([]);
+const lines = shallowRef<OutputLine[]>([]);
+const ready = ref(false);
+const truncated = ref(false);
 const outputBox = ref<HTMLElement | null>(null);
-let unlistenLine: UnlistenFn | null = null;
-let unlistenDone: UnlistenFn | null = null;
+let pendingLines: string[] = [];
+let outputTimer: number | undefined;
+let lineId = 0;
 let currentTask = '';
 
 const activePresetObj = computed(
@@ -71,22 +85,50 @@ watch(activePreset, (key) => {
 });
 
 onMounted(async () => {
-	unlistenLine = await onDiagLine((p) => {
-		if (p.task_id !== currentTask) return;
-		if (/^\s*\[命令结束，退出码/.test(p.line)) return;
-		lines.value.push(p.line);
-		scrollBottom();
-	});
-	unlistenDone = await onDiagDone((p) => {
-		if (p.task_id !== currentTask) return;
-		running.value = false;
-	});
+	try {
+		await Promise.all([
+			registerListener(onDiagLine((p) => {
+				if (p.task_id !== currentTask || /^\s*\[命令结束，退出码/.test(p.line)) return;
+				appendLine(p.line);
+			})),
+			registerListener(onDiagDone((p) => {
+				if (p.task_id !== currentTask) return;
+				flushOutput();
+				running.value = false;
+			})),
+		]);
+		ready.value = true;
+	} catch (error) {
+		ElMessage.error(String(error));
+	}
 });
 
 onUnmounted(() => {
-	unlistenLine?.();
-	unlistenDone?.();
+	window.clearTimeout(outputTimer);
+	if (running.value) void stopDiagnostic(currentTask).catch(() => undefined);
 });
+
+function appendLine(text: string) {
+	pendingLines.push(text);
+	if (pendingLines.length >= OUTPUT_BATCH_LIMIT) flushOutput();
+	else outputTimer ??= window.setTimeout(flushOutput, OUTPUT_BATCH_MS);
+}
+
+function flushOutput() {
+	window.clearTimeout(outputTimer);
+	outputTimer = undefined;
+	if (!pendingLines.length) return;
+	const batch = pendingLines.splice(0).map((text) => ({
+		id: ++lineId,
+		text,
+		cls: lineClass(text),
+		tokens: tokenize(text),
+	}));
+	const output = [...lines.value, ...batch];
+	if (output.length > MAX_OUTPUT_LINES) truncated.value = true;
+	lines.value = output.slice(-MAX_OUTPUT_LINES);
+	void scrollBottom();
+}
 
 async function scrollBottom() {
 	await nextTick();
@@ -95,9 +137,9 @@ async function scrollBottom() {
 }
 
 async function run() {
-	if (running.value) return;
+	if (!ready.value || running.value) return;
 	running.value = true;
-	lines.value = [];
+	clearOutput();
 	currentTask = `task-${Date.now()}`;
 	const args = extraArgs.value.trim()
 		? extraArgs.value.trim().split(/\s+/)
@@ -110,7 +152,8 @@ async function run() {
 			args
 		);
 	} catch (e) {
-		lines.value.push(`命令启动失败：${e}`);
+		appendLine(`命令启动失败：${e}`);
+		flushOutput();
 		running.value = false;
 	}
 }
@@ -119,19 +162,23 @@ async function stop() {
 	if (!running.value || !currentTask) return;
 	try {
 		await stopDiagnostic(currentTask);
-		lines.value.push('— 已手动停止命令 —');
-		scrollBottom();
+		appendLine('— 已手动停止命令 —');
+		flushOutput();
 	} catch (e) {
 		ElMessage.warning(`停止失败：${e}`);
 	}
 }
 
 function clearOutput() {
+	window.clearTimeout(outputTimer);
+	outputTimer = undefined;
+	pendingLines = [];
 	lines.value = [];
+	truncated.value = false;
 }
 
 async function copyOutput() {
-	const text = lines.value.join('\n');
+	const text = lines.value.map((line) => line.text).join('\n');
 	if (!text) {
 		ElMessage.warning('暂无输出内容');
 		return;
@@ -202,12 +249,13 @@ function lineClass(line: string): string {
 				<el-input
 					v-model="extraArgs"
 					placeholder="附加参数（可选，空格分隔），如 -n 10 -l 1000"
+					class="extra-args-input"
 					clearable
 					:disabled="running" />
 			</div>
 
 			<div class="btn-row">
-				<el-button type="primary" :loading="running" @click="run">
+				<el-button type="primary" :disabled="!ready" :loading="running" @click="run">
 					{{ running ? '执行中…' : '执行命令' }}
 				</el-button>
 				<el-button type="danger" :disabled="!running" @click="stop"
@@ -245,15 +293,17 @@ function lineClass(line: string): string {
 				<div class="progress-bar"></div>
 			</div>
 			<div ref="outputBox" class="diag-lines">
+				<div v-if="truncated" class="diag-line is-summary">仅保留最近 {{ MAX_OUTPUT_LINES }} 行</div>
 				<div v-if="!lines.length && !running" class="diag-empty muted">
 					选择命令后点击「执行命令」，结果将在此显示
 				</div>
 				<div
-					v-for="(line, i) in lines"
-					:key="i"
+					v-for="line in lines"
+					:key="line.id"
+					v-memo="[line]"
 					class="diag-line"
-					:class="lineClass(line)">
-					<template v-for="(t, j) in tokenize(line)" :key="j">
+					:class="line.cls">
+					<template v-for="(t, j) in line.tokens" :key="j">
 						<span :class="t.cls">{{ t.text }}</span>
 					</template>
 				</div>
@@ -325,6 +375,9 @@ function lineClass(line: string): string {
 }
 .target-input {
 	flex: 1;
+}
+html:not(.dark) .extra-args-input {
+	--el-input-bg-color: transparent;
 }
 .btn-row {
 	display: flex;

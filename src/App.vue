@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import appIcon from '../src-tauri/icons/128x128.png';
 import { ElMessage, ElMessageBox, ElConfigProvider } from 'element-plus';
@@ -14,6 +14,9 @@ import {
 	hideWidget,
 	setWindowTheme,
 	onAdaptersChanged,
+	onMainVisibilityChanged,
+	onTrafficMonitorChanged,
+	onWidgetAdapterChanged,
 	getAutostart,
 	setAutostart,
 	createDesktopShortcut,
@@ -27,16 +30,14 @@ import {
 	adapters,
 	currentName,
 	refreshAdapters,
-	scheduleDelayedRefresh,
+	applyAdapterSnapshot,
 	normalizeConfig,
 } from '@/composables/useStore';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { useScopedListeners } from '@/composables/useScopedListeners';
 import AdapterList from '@/components/AdapterList.vue';
 import TrafficMonitor from '@/components/TrafficMonitor.vue';
 import AdapterDetail from '@/components/AdapterDetail.vue';
-import Diagnostics from '@/components/Diagnostics.vue';
-import NetworkScan from '@/components/NetworkScan.vue';
-import UpdateDialog from '@/components/UpdateDialog.vue';
+
 import {
 	Setting,
 	Sunny,
@@ -46,6 +47,7 @@ import {
 	Key,
 	Monitor,
 	Timer,
+	DataLine,
 	Close,
 	Minus,
 	FullScreen,
@@ -53,9 +55,14 @@ import {
 	Download,
 } from '@element-plus/icons-vue';
 
+const Diagnostics = defineAsyncComponent(() => import('@/components/Diagnostics.vue'));
+const NetworkScan = defineAsyncComponent(() => import('@/components/NetworkScan.vue'));
+const UpdateDialog = defineAsyncComponent(() => import('@/components/UpdateDialog.vue'));
+
 const admin = ref(false);
 const appVersion = __APP_VERSION__;
 const settingsVisible = ref(false);
+const settingsSaving = ref(false);
 const settingsPosition = ref<Record<string, string>>({
 	top: '48px',
 	right: '12px',
@@ -65,6 +72,8 @@ const activeTab = ref('ip');
 const defaultAdapter = ref('');
 const closeAction = ref<'exit' | 'tray'>('tray');
 const widgetVisible = ref(true);
+const trafficMonitorEnabled = ref(true);
+const savedTrafficMonitorEnabled = ref<boolean>();
 const autostart = ref(true);
 const shortcutBusy = ref(false);
 const updateVisible = ref(false);
@@ -74,6 +83,10 @@ const checkingUpdate = ref(false);
 const sidebarWidth = ref(350);
 const theme = ref<'light' | 'dark'>('dark');
 const mainWindow = getCurrentWindow();
+const windowShown = ref(true);
+const windowMinimized = ref(false);
+const pageVisible = ref(!document.hidden);
+const monitoringActive = computed(() => windowShown.value && pageVisible.value && !windowMinimized.value);
 const windowMaximized = ref(false);
 const bodyRef = ref<HTMLElement | null>(null);
 
@@ -187,7 +200,9 @@ async function toggleMaximize() {
 }
 
 async function syncWindowMaximized() {
-	windowMaximized.value = await mainWindow.isMaximized();
+	const [maximized, minimized] = await Promise.all([mainWindow.isMaximized(), mainWindow.isMinimized()]);
+	windowMaximized.value = maximized;
+	windowMinimized.value = minimized;
 }
 
 function onTitlebarDoubleClick(event: MouseEvent) {
@@ -197,7 +212,7 @@ function onTitlebarDoubleClick(event: MouseEvent) {
 
 async function init() {
 	appConfig.value = normalizeConfig(await getConfig());
-	void saveConfig(appConfig.value);
+	savedTrafficMonitorEnabled.value ??= appConfig.value.traffic_monitor_enabled ?? true;
 	sidebarWidth.value = appConfig.value.sidebar_width ?? 350;
 	widgetVisible.value = appConfig.value.widget_visible ?? true;
 	try {
@@ -207,37 +222,78 @@ async function init() {
 	}
 	applyTheme(appConfig.value.theme === 'light' ? 'light' : 'dark');
 	admin.value = await checkAdmin();
-	await refreshAdapters();
+	await refreshAdapterList(false);
 	if (!currentName.value) {
 		currentName.value =
-			appConfig.value.default_adapter ?? adapters.value[0]?.name ?? null;
+			adapters.value.find((a) => a.name === appConfig.value.default_adapter)?.name ??
+			adapters.value[0]?.name ?? null;
 	}
 }
 
-let adaptersUnlisten: UnlistenFn | null = null;
-let windowStateUnlisten: UnlistenFn | null = null;
+const registerListener = useScopedListeners();
 let windowStateSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
+async function refreshAdapterList(force = true) {
+	try {
+		await refreshAdapters(force);
+	} catch (error) {
+		ElMessage.error(String(error));
+	}
+}
+
+function onPageVisibilityChanged() {
+	pageVisible.value = !document.hidden;
+	if (pageVisible.value) void syncWindowMaximized().catch(() => undefined);
+}
+
+async function minimizeMain() {
+	windowMinimized.value = true;
+	try {
+		await mainWindow.minimize();
+	} catch (error) {
+		windowMinimized.value = false;
+		ElMessage.error(String(error));
+	}
+}
+
 onMounted(async () => {
-	await init();
-	await syncWindowMaximized();
-	windowStateUnlisten = await mainWindow.onResized(() => {
-		if (windowStateSyncTimer) clearTimeout(windowStateSyncTimer);
-		windowStateSyncTimer = setTimeout(() => {
-			void syncWindowMaximized();
-			windowStateSyncTimer = null;
-		}, 100);
-	});
-	// 先处理权限询问（内部已吞掉取消/异常），结束后再静默检查更新，避免弹窗叠加
-	await promptAdminIfNeeded();
-	void silentCheckUpdate();
-	// 挂件切换后通知主窗：本地延时刷新等待收敛，不再回播挂件，避免互相触发
-	adaptersUnlisten = await onAdaptersChanged(() =>
-		scheduleDelayedRefresh(false),
-	);
+	document.addEventListener('visibilitychange', onPageVisibilityChanged);
 	document.addEventListener('pointerdown', onDocPointerDown);
 	document.addEventListener('keydown', onDocKeydown);
 	window.addEventListener('resize', updateSettingsPosition);
+	await Promise.all([
+		registerListener(onAdaptersChanged(applyAdapterSnapshot)),
+		registerListener(onMainVisibilityChanged((visible) => {
+			windowShown.value = visible;
+			if (visible) windowMinimized.value = false;
+		})),
+		registerListener(onTrafficMonitorChanged((enabled) => {
+			const previous = savedTrafficMonitorEnabled.value ?? true;
+			savedTrafficMonitorEnabled.value = enabled;
+			if (!settingsVisible.value || trafficMonitorEnabled.value === previous) {
+				trafficMonitorEnabled.value = enabled;
+			}
+		})),
+		registerListener(onWidgetAdapterChanged((name) => {
+			appConfig.value.default_adapter = name;
+			appConfig.value.widget_adapter = name;
+		})),
+		registerListener(mainWindow.onResized(() => {
+			if (windowStateSyncTimer) clearTimeout(windowStateSyncTimer);
+			windowStateSyncTimer = setTimeout(() => {
+				void syncWindowMaximized().catch(() => undefined);
+				windowStateSyncTimer = null;
+			}, 100);
+		})),
+		registerListener(mainWindow.onFocusChanged(({ payload: focused }) => {
+			if (focused) windowMinimized.value = false;
+		})),
+	]);
+	await init();
+	await syncWindowMaximized();
+	// 先处理权限询问（内部已吞掉取消/异常），结束后再静默检查更新，避免弹窗叠加
+	await promptAdminIfNeeded();
+	void silentCheckUpdate();
 });
 
 let dragging = false;
@@ -272,17 +328,18 @@ onUnmounted(() => {
 	window.removeEventListener('pointerup', stopDrag);
 	document.removeEventListener('pointerdown', onDocPointerDown);
 	document.removeEventListener('keydown', onDocKeydown);
+	document.removeEventListener('visibilitychange', onPageVisibilityChanged);
 	window.removeEventListener('resize', updateSettingsPosition);
-	if (adaptersUnlisten) void adaptersUnlisten();
-	if (windowStateUnlisten) void windowStateUnlisten();
 	if (windowStateSyncTimer) clearTimeout(windowStateSyncTimer);
 });
 
 async function openSettings() {
+	appConfig.value.widget_visible = (await getConfig()).widget_visible;
 	defaultAdapter.value = appConfig.value.default_adapter ?? '';
 	closeAction.value =
 		appConfig.value.close_action === 'exit' ? 'exit' : 'tray';
 	widgetVisible.value = appConfig.value.widget_visible ?? true;
+	trafficMonitorEnabled.value = savedTrafficMonitorEnabled.value ?? true;
 	try {
 		autostart.value = await getAutostart();
 	} catch {
@@ -315,20 +372,31 @@ function updateSettingsPosition() {
 }
 
 async function saveDefaultAdapter() {
-	appConfig.value.default_adapter = defaultAdapter.value || null;
-	appConfig.value.close_action = closeAction.value;
-	appConfig.value.widget_visible = widgetVisible.value;
-	appConfig.value.autostart = autostart.value;
-	await saveConfig(appConfig.value);
-	await setAutostart(autostart.value);
-	emitConfigChanged();
-	if (widgetVisible.value) {
-		await showWidget();
-	} else {
-		await hideWidget();
+	if (settingsSaving.value) return;
+	settingsSaving.value = true;
+	const showDesktopWidget = widgetVisible.value;
+	const trafficChange = trafficMonitorEnabled.value === (savedTrafficMonitorEnabled.value ?? true)
+		? undefined : trafficMonitorEnabled.value;
+	const changes = {
+		default_adapter: defaultAdapter.value || null,
+		close_action: closeAction.value,
+		autostart: autostart.value,
+	};
+	try {
+		await saveConfig({ ...appConfig.value, ...changes }, trafficChange);
+		Object.assign(appConfig.value, changes);
+		emitConfigChanged();
+		if (showDesktopWidget) await showWidget();
+		else await hideWidget();
+		appConfig.value.widget_visible = showDesktopWidget;
+		await setAutostart(changes.autostart);
+		ElMessage.success('设置已保存');
+		settingsVisible.value = false;
+	} catch (error) {
+		ElMessage.error(String(error));
+	} finally {
+		settingsSaving.value = false;
 	}
-	ElMessage.success('设置已保存');
-	settingsVisible.value = false;
 }
 
 async function onCreateShortcut() {
@@ -488,7 +556,7 @@ function openUpdateDialog() {
 						<button
 							class="window-control"
 							aria-label="最小化"
-							@click="mainWindow.minimize()">
+							@click="minimizeMain">
 							<el-icon><Minus /></el-icon>
 						</button>
 					</el-tooltip>
@@ -519,8 +587,8 @@ function openUpdateDialog() {
 
 		<div class="app-body" ref="bodyRef">
 			<aside class="sidebar" :style="{ width: sidebarWidth + 'px' }">
-				<AdapterList class="sidebar-adapter-list" @refresh="refreshAdapters" />
-				<TrafficMonitor />
+				<AdapterList class="sidebar-adapter-list" @refresh="refreshAdapterList()" />
+				<TrafficMonitor v-if="savedTrafficMonitorEnabled" :active="monitoringActive" />
 			</aside>
 			<div
 				class="splitter"
@@ -532,10 +600,10 @@ function openUpdateDialog() {
 					<el-tab-pane label="IP 配置" name="ip">
 						<AdapterDetail />
 					</el-tab-pane>
-					<el-tab-pane label="主机扫描" name="scan">
+					<el-tab-pane label="主机扫描" name="scan" lazy>
 						<NetworkScan />
 					</el-tab-pane>
-					<el-tab-pane label="网络诊断" name="diag">
+					<el-tab-pane label="网络诊断" name="diag" lazy>
 						<Diagnostics />
 					</el-tab-pane>
 				</el-tabs>
@@ -611,6 +679,11 @@ function openUpdateDialog() {
 							<div class="settings-item-copy"><strong>开机自启</strong></div>
 							<el-switch v-model="autostart" size="small" />
 						</div>
+						<div class="settings-surface settings-toggle-card settings-traffic-card">
+							<div class="settings-item-icon"><el-icon><DataLine /></el-icon></div>
+							<div class="settings-item-copy"><strong>流量监控</strong></div>
+							<el-switch v-model="trafficMonitorEnabled" size="small" aria-label="流量监控" />
+						</div>
 					</div>
 				</section>
 
@@ -665,24 +738,25 @@ function openUpdateDialog() {
 					</div>
 					<div class="settings-footer-actions">
 						<el-button class="settings-cancel-button" @click="settingsVisible = false">取消</el-button>
-						<el-button type="primary" class="settings-save-button" @click="saveDefaultAdapter">保存设置</el-button>
+						<el-button type="primary" class="settings-save-button" :loading="settingsSaving" @click="saveDefaultAdapter">保存设置</el-button>
 					</div>
 				</div>
 			</template>
 		</el-dialog>
 
-		<UpdateDialog v-model:visible="updateVisible" :info="updateInfo" />
+		<UpdateDialog v-if="updateVisible" v-model:visible="updateVisible" :info="updateInfo" />
 	</div>
 	</el-config-provider>
 </template>
 
 <style scoped>
 .app-shell {
+	--window-frame-width: 1px;
 	height: 100%;
 	display: flex;
 	flex-direction: column;
 	background: var(--app-bg);
-	border: 1px solid var(--panel-border);
+	border: var(--window-frame-width) solid var(--panel-border);
 }
 .app-header {
 	height: 40px;
@@ -805,7 +879,12 @@ function openUpdateDialog() {
 	color: var(--text-primary);
 }
 .window-control.close-control {
-	width: 48px;
+	width: calc(48px + var(--window-frame-width));
+	height: calc(40px + var(--window-frame-width));
+	margin-top: calc(-1 * var(--window-frame-width));
+	margin-right: calc(-1 * var(--window-frame-width));
+	padding-top: var(--window-frame-width);
+	padding-right: var(--window-frame-width);
 }
 .window-control.close-control:hover {
 	background: #c42b1c;

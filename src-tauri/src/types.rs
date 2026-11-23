@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// 网卡信息（前端列表与详情展示使用）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdapterInfo {
     /// 接口别名（netsh / PowerShell 使用的名称，作为操作标识）
     pub name: String,
@@ -57,6 +57,9 @@ pub struct AppConfig {
     /// 是否显示桌面挂件（透明悬浮小窗）
     #[serde(default)]
     pub widget_visible: Option<bool>,
+    /// 是否监控流量（缺省 true），同时控制主窗口和挂件
+    #[serde(default)]
+    pub traffic_monitor_enabled: Option<bool>,
     /// 挂件选中的网卡接口别名
     #[serde(default)]
     pub widget_adapter: Option<String>,
@@ -78,8 +81,8 @@ pub struct AppConfig {
     /// 用户已选择以管理员权限重启；后续启动时自动通过 UAC 请求管理员权限
     #[serde(default)]
     pub elevate_on_startup: Option<bool>,
-    /// Previously responsive hosts, used to distinguish offline from never discovered.
-    #[serde(default)]
+    /// 旧版本保存在配置中的扫描历史，迁移成功后从配置中移除。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub host_history: Vec<HostHistory>,
 }
 

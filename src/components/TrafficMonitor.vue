@@ -1,24 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, shallowReactive, shallowRef, watch } from 'vue';
 import { currentName, adapters } from '@/composables/useStore';
 import { getAdapterTraffic } from '@/api/ipc';
+import type { AdapterInfo, AdapterTrafficCounters } from '@/types';
 import { RefreshRight, Top, Bottom } from '@element-plus/icons-vue';
 
+const props = defineProps<{ active: boolean }>();
+
+interface CounterBaseline {
+	initial: number;
+	retained: number;
+}
+
 interface TrafficSession {
-	lastSent: number | null;
-	lastReceived: number | null;
-	lastSampleAt: number | null;
-	uploaded: number;
-	downloaded: number;
+	sent: CounterBaseline;
+	received: CounterBaseline;
+	latest: AdapterTrafficCounters;
 	startedAt: number;
 }
 
-const sessions = reactive(new Map<string, TrafficSession>());
+const sessions = shallowReactive(new Map<string, TrafficSession>());
 const uploadRate = ref(0);
 const downloadRate = ref(0);
 const HISTORY_WINDOW_SECONDS = 60;
-const uploadHistory = ref<number[]>(Array(HISTORY_WINDOW_SECONDS).fill(0));
-const downloadHistory = ref<number[]>(Array(HISTORY_WINDOW_SECONDS).fill(0));
+const uploadHistory = shallowRef<number[]>(Array(HISTORY_WINDOW_SECONDS).fill(0));
+const downloadHistory = shallowRef<number[]>(Array(HISTORY_WINDOW_SECONDS).fill(0));
 const uploadPath = computed(() => sparkline(uploadHistory.value));
 const downloadPath = computed(() => sparkline(downloadHistory.value));
 const uploadArea = computed(() => `${uploadPath.value} L120 27 L0 27 Z`);
@@ -30,9 +36,18 @@ const clock = ref(Date.now());
 const adapter = computed(
 	() => adapters.value.find((item) => item.name === currentName.value) ?? null,
 );
+const adapterKey = computed(() => adapter.value ? trafficKey(adapter.value) : null);
 const session = computed(() =>
-	currentName.value ? sessions.get(currentName.value) ?? null : null,
+	adapterKey.value ? sessions.get(adapterKey.value) ?? null : null,
 );
+const uploadedText = computed(() => {
+	const current = session.value;
+	return formatBytes(current ? counterTotal(current.sent, current.latest.sent_bytes) : 0);
+});
+const downloadedText = computed(() => {
+	const current = session.value;
+	return formatBytes(current ? counterTotal(current.received, current.latest.received_bytes) : 0);
+});
 const monitoredFor = computed(() =>
 	session.value?.startedAt
 		? formatDuration(Math.floor((clock.value - session.value.startedAt) / 1000))
@@ -40,9 +55,16 @@ const monitoredFor = computed(() =>
 );
 
 let timer: number | undefined;
-let clockTimer: number | undefined;
 let sampling = false;
-let mounted = false;
+let sampleGeneration = 0;
+let lastRateSample: AdapterTrafficCounters | null = null;
+let disposed = false;
+
+function trafficKey(selected: AdapterInfo): string {
+	return selected.interface_guid
+		? 'guid:' + selected.interface_guid.toLowerCase()
+		: 'name:' + selected.name + ':' + (selected.mac ?? selected.if_index ?? '');
+}
 
 function sparkline(values: number[]) {
 	// 固定 60 秒窗口；缩放基于当前窗口峰值并留出顶部余量，零流量贴近基线。
@@ -65,62 +87,83 @@ function sparkline(values: number[]) {
 }
 
 function pushHistory() {
-	uploadHistory.value = [...uploadHistory.value.slice(-(HISTORY_WINDOW_SECONDS - 1)), uploadRate.value];
-	downloadHistory.value = [...downloadHistory.value.slice(-(HISTORY_WINDOW_SECONDS - 1)), downloadRate.value];
+	if (uploadHistory.value.some((rate) => rate !== uploadRate.value)) {
+		uploadHistory.value = [...uploadHistory.value.slice(1), uploadRate.value];
+	}
+	if (downloadHistory.value.some((rate) => rate !== downloadRate.value)) {
+		downloadHistory.value = [...downloadHistory.value.slice(1), downloadRate.value];
+	}
 }
 
-function newSession(): TrafficSession {
+function resetHistory() {
+	uploadRate.value = 0;
+	downloadRate.value = 0;
+	uploadHistory.value = Array(HISTORY_WINDOW_SECONDS).fill(0);
+	downloadHistory.value = Array(HISTORY_WINDOW_SECONDS).fill(0);
+}
+
+function newSession(counters: AdapterTrafficCounters, startedAt = counters.sampled_at): TrafficSession {
 	return {
-		lastSent: null,
-		lastReceived: null,
-		lastSampleAt: null,
-		uploaded: 0,
-		downloaded: 0,
-		startedAt: Date.now(),
+		sent: { initial: counters.sent_bytes, retained: 0 },
+		received: { initial: counters.received_bytes, retained: 0 },
+		latest: counters,
+		startedAt,
 	};
 }
 
+function counterTotal(baseline: CounterBaseline, latest: number): number {
+	return baseline.retained + (latest - baseline.initial);
+}
+
+function updateBaseline(baseline: CounterBaseline, previous: number, latest: number): CounterBaseline {
+	// 网卡或驱动重置计数时，保留已观察到的累计，从新计数继续。
+	return latest < previous ? { initial: latest, retained: counterTotal(baseline, previous) } : baseline;
+}
+
 async function sample() {
-	const name = currentName.value;
-	if (!name || sampling || !mounted) return;
+	const selected = adapter.value;
+	const key = adapterKey.value;
+	if (!selected || !key || sampling || !props.active || disposed) return;
+	const { name, if_index } = selected;
+	const generation = sampleGeneration;
+	clock.value = Date.now();
 	sampling = true;
-	reading.value = true;
+	if (!session.value) reading.value = true;
 	try {
-		const counters = await getAdapterTraffic(name);
-		const now = Date.now();
-		const current = sessions.get(name) ?? newSession();
-		if (current.lastSent !== null && current.lastReceived !== null) {
-			const sentDelta = counters.sent_bytes >= current.lastSent
-				? counters.sent_bytes - current.lastSent
-				: 0;
-			const receivedDelta = counters.received_bytes >= current.lastReceived
-				? counters.received_bytes - current.lastReceived
-				: 0;
-			current.uploaded += sentDelta;
-			current.downloaded += receivedDelta;
-			const elapsed = current.lastSampleAt
-				? (now - current.lastSampleAt) / 1000
-				: 0;
-			if (name === currentName.value && elapsed > 0 && elapsed <= 3) {
-				uploadRate.value = sentDelta / elapsed;
-				downloadRate.value = receivedDelta / elapsed;
-			} else if (name === currentName.value) {
-				uploadRate.value = 0;
-				downloadRate.value = 0;
-			}
-		} else if (name === currentName.value) {
-			uploadRate.value = 0;
-			downloadRate.value = 0;
+		const counters = await getAdapterTraffic(name, if_index);
+		if (generation !== sampleGeneration || !props.active || adapterKey.value !== key) return;
+
+		const current = sessions.get(key);
+		const previous = current?.latest;
+		if (!current || !previous) {
+			sessions.set(key, newSession(counters));
+		} else if (previous.sampled_at !== counters.sampled_at) {
+			sessions.set(key, {
+				sent: updateBaseline(current.sent, previous.sent_bytes, counters.sent_bytes),
+				received: updateBaseline(current.received, previous.received_bytes, counters.received_bytes),
+				latest: counters,
+				startedAt: current.startedAt,
+			});
 		}
-		current.lastSent = counters.sent_bytes;
-		current.lastReceived = counters.received_bytes;
-		current.lastSampleAt = now;
-		sessions.set(name, current);
-		if (name === currentName.value) unavailable.value = false;
-		if (name === currentName.value) pushHistory();
+		unavailable.value = false;
+
+		const rateBaseline = lastRateSample;
+		if (rateBaseline?.sampled_at === counters.sampled_at) return;
+		lastRateSample = counters;
+		if (!rateBaseline) return;
+
+		const elapsed = (counters.sampled_at - rateBaseline.sampled_at) / 1000;
+		if (elapsed <= 0 || elapsed > 3) {
+			resetHistory();
+			return;
+		}
+		uploadRate.value = Math.max(0, counters.sent_bytes - rateBaseline.sent_bytes) / elapsed;
+		downloadRate.value = Math.max(0, counters.received_bytes - rateBaseline.received_bytes) / elapsed;
+		pushHistory();
 	} catch {
-		if (name === currentName.value) {
+		if (generation === sampleGeneration && props.active && adapterKey.value === key) {
 			unavailable.value = true;
+			lastRateSample = null;
 			uploadRate.value = 0;
 			downloadRate.value = 0;
 			pushHistory();
@@ -128,22 +171,18 @@ async function sample() {
 	} finally {
 		reading.value = false;
 		sampling = false;
+		// 恢复窗口或切换网卡时，等旧请求结束就读取当前网卡。
+		if (generation !== sampleGeneration) void sample();
 	}
 }
 
 function resetSession() {
-	const name = currentName.value;
-	if (!name) return;
-	const existing = sessions.get(name);
-	sessions.set(name, {
-		lastSent: existing?.lastSent ?? null,
-		lastReceived: existing?.lastReceived ?? null,
-		lastSampleAt: existing?.lastSampleAt ?? null,
-		uploaded: 0,
-		downloaded: 0,
-		startedAt: Date.now(),
-	});
-	clock.value = Date.now();
+	const key = adapterKey.value;
+	const current = session.value;
+	if (!key || !current) return;
+	const now = Date.now();
+	sessions.set(key, newSession(current.latest, now));
+	clock.value = now;
 }
 
 function formatRate(value: number): string {
@@ -180,28 +219,32 @@ function formatDuration(totalSeconds: number): string {
 		: `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-watch(currentName, () => {
-	uploadRate.value = 0;
-	downloadRate.value = 0;
-	uploadHistory.value = Array(HISTORY_WINDOW_SECONDS).fill(0);
-	downloadHistory.value = Array(HISTORY_WINDOW_SECONDS).fill(0);
-	unavailable.value = false;
-	void sample();
+watch(adapters, (available) => {
+	const keys = new Set(available.map(trafficKey));
+	for (const key of sessions.keys()) {
+		if (!keys.has(key)) sessions.delete(key);
+	}
 });
 
-onMounted(() => {
-	mounted = true;
-	void sample();
-	timer = window.setInterval(() => void sample(), 1000);
-	clockTimer = window.setInterval(() => {
-		clock.value = Date.now();
-	}, 1000);
-});
+watch([() => props.active, adapterKey, () => adapter.value?.name, () => adapter.value?.if_index], ([active, key]) => {
+	sampleGeneration++;
+	lastRateSample = null;
+	window.clearInterval(timer);
+	timer = undefined;
+	if (active) {
+		resetHistory();
+		unavailable.value = false;
+	}
+	if (active && key) {
+		void sample();
+		timer = window.setInterval(() => void sample(), 1000);
+	}
+}, { immediate: true });
 
 onUnmounted(() => {
-	mounted = false;
-	if (timer !== undefined) window.clearInterval(timer);
-	if (clockTimer !== undefined) window.clearInterval(clockTimer);
+	disposed = true;
+	sampleGeneration++;
+	window.clearInterval(timer);
 });
 </script>
 
@@ -212,11 +255,11 @@ onUnmounted(() => {
 				<span class="traffic-title">流量监控</span>
 			</div>
 			<div class="traffic-controls">
-				<span class="monitor-state" :class="{ unavailable, 'is-live': session && !unavailable }">
+				<span class="monitor-state" :class="{ unavailable, 'is-live': active && session && !unavailable }">
 					<i></i>{{ unavailable ? '暂不可用' : session ? '实时监测' : reading ? '连接中' : '等待数据' }}
 				</span>
 				<el-tooltip content="重置本次累计" placement="top" popper-class="app-tip">
-					<button class="reset-button" :disabled="!adapter" @click="resetSession">
+					<button class="reset-button" :disabled="!session" @click="resetSession">
 						<el-icon><RefreshRight /></el-icon>
 					</button>
 				</el-tooltip>
@@ -230,22 +273,22 @@ onUnmounted(() => {
 		<div class="traffic-metrics">
 			<div class="metric-item">
 				<div class="metric-current">
-					<span class="metric-label upload-rate"><el-icon><Top /></el-icon>上传</span>
+					<span class="metric-label"><el-icon><Top /></el-icon>上传</span>
 					<strong>{{ unavailable ? '—' : formatRate(uploadRate) }}</strong>
 				</div>
 				<svg class="metric-wave upload-wave" viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true"><path class="grid-line" d="M0 3 H120 M0 13 H120 M0 23 H120" /><path class="wave-area" :d="uploadArea" /><path class="wave-line" :d="uploadPath" /></svg>
-				<div class="metric-total"><span>累计</span><strong>{{ formatBytes(session?.uploaded ?? 0) }}</strong></div>
+				<div class="metric-total"><span>累计</span><strong>{{ uploadedText }}</strong></div>
 			</div>
-			<div class="metric-item">
+			<div class="metric-item is-download">
 				<div class="metric-current">
-					<span class="metric-label download-rate"><el-icon><Bottom /></el-icon>下载</span>
+					<span class="metric-label"><el-icon><Bottom /></el-icon>下载</span>
 					<strong>{{ unavailable ? '—' : formatRate(downloadRate) }}</strong>
 				</div>
 				<svg class="metric-wave download-wave" viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true"><path class="grid-line" d="M0 3 H120 M0 13 H120 M0 23 H120" /><path class="wave-area" :d="downloadArea" /><path class="wave-line" :d="downloadPath" /></svg>
-				<div class="metric-total"><span>累计</span><strong>{{ formatBytes(session?.downloaded ?? 0) }}</strong></div>
+				<div class="metric-total"><span>累计</span><strong>{{ downloadedText }}</strong></div>
 			</div>
 		</div>
-		<div class="traffic-footnote"><span>监控时长 {{ monitoredFor }}</span><span>重启软件后重新统计</span></div>
+		<div class="traffic-footnote"><span>监控时长 {{ monitoredFor }}</span><span>关闭监控或退出软件后清零</span></div>
 	</section>
 </template>
 
@@ -290,6 +333,7 @@ onUnmounted(() => {
 	font-size: 10px;
 }
 .monitor-state i {
+	position: relative;
 	width: 6px;
 	height: 6px;
 	border-radius: 50%;
@@ -298,18 +342,28 @@ onUnmounted(() => {
 .monitor-state.is-live i {
 	animation: monitor-pulse 1.8s ease-in-out infinite;
 }
+.monitor-state.is-live i::before {
+	content: '';
+	position: absolute;
+	inset: -2px;
+	border-radius: inherit;
+	background: currentColor;
+	animation: monitor-halo 1.8s ease-in-out infinite;
+}
 @keyframes monitor-pulse {
 	0%,
 	100% {
 		opacity: 0.65;
 		transform: scale(0.85);
-		box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 24%, transparent);
 	}
 	50% {
 		opacity: 1;
 		transform: scale(1.15);
-		box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 0%, transparent);
 	}
+}
+@keyframes monitor-halo {
+	0%, 100% { opacity: 0.22; transform: scale(0.7); }
+	50% { opacity: 0; transform: scale(1.45); }
 }
 .monitor-state.unavailable {
 	color: var(--danger);
@@ -338,7 +392,8 @@ onUnmounted(() => {
 	cursor: not-allowed;
 }
 @media (prefers-reduced-motion: reduce) {
-	.monitor-state.is-live i {
+	.monitor-state.is-live i,
+	.monitor-state.is-live i::before {
 		animation: none;
 	}
 }
@@ -360,8 +415,12 @@ onUnmounted(() => {
 }
 
 .metric-item {
+	--metric-color: var(--accent);
 	min-width: 0;
 	padding: 7px 9px 6px;
+}
+.metric-item.is-download {
+	--metric-color: var(--success);
 }
 .metric-wave { display:block; width:100%; height:30px; margin:4px 0 2px; pointer-events:none; overflow:visible; }
 .metric-wave .grid-line { fill:none; stroke:var(--panel-border); stroke-width:.65; stroke-dasharray:2 2; opacity:.75; }
@@ -385,16 +444,11 @@ onUnmounted(() => {
 	font-size: 10px;
 }
 .metric-label :deep(.el-icon) {
+	color: var(--metric-color);
 	font-size: 11px;
 }
-.metric-label.upload-rate :deep(.el-icon) {
-	color: var(--accent);
-}
-.metric-label.download-rate :deep(.el-icon) {
-	color: var(--success);
-}
 .metric-current > strong {
-	color: var(--text-primary);
+	color: var(--metric-color);
 	font-size: 12px;
 	font-weight: 650;
 	font-variant-numeric: tabular-nums;
@@ -406,7 +460,7 @@ onUnmounted(() => {
 	font-size: 9px;
 }
 .metric-total strong {
-	color: var(--text-secondary);
+	color: var(--metric-color);
 	font-size: 10px;
 	font-weight: 550;
 	font-variant-numeric: tabular-nums;

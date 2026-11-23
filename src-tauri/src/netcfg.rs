@@ -4,24 +4,36 @@ use crate::types::AdapterInfo;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter, Manager};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::NetworkManagement::IpHelper::{
-    FreeMibTable, GetIfTable2, MIB_IF_TABLE2,
+    FreeMibTable, GetIfEntry2, GetIfTable2, MIB_IF_ROW2, MIB_IF_TABLE2,
 };
 
 /// 判断当前进程是否具备管理员权限
+#[cfg(target_os = "windows")]
 pub fn is_admin() -> bool {
-    let mut cmd = Command::new("powershell");
-    cmd.args([
-        "-NoProfile",
-        "-Command",
-        "[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
-    ]);
-    suppress_window(&mut cmd);
-    match cmd.output() {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).trim() == "True",
-        Err(_) => false,
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Security::{
+        CheckTokenMembership, CreateWellKnownSid, WinBuiltinAdministratorsSid, SECURITY_MAX_SID_SIZE,
+    };
+
+    let mut sid = [0u32; (SECURITY_MAX_SID_SIZE as usize).div_ceil(4)];
+    let mut size = SECURITY_MAX_SID_SIZE;
+    let mut member = 0;
+    let sid = sid.as_mut_ptr().cast();
+    unsafe {
+        CreateWellKnownSid(WinBuiltinAdministratorsSid, null_mut(), sid, &mut size) != 0
+            && CheckTokenMembership(null_mut(), sid, &mut member) != 0
+            && member != 0
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn is_admin() -> bool {
+    false
 }
 
 fn netsh(args: &[&str]) -> Result<(bool, String), String> {
@@ -42,7 +54,8 @@ fn netsh(args: &[&str]) -> Result<(bool, String), String> {
     Ok((output.status.success(), combined))
 }
 
-const LIST_SCRIPT: &str = r#"$ErrorActionPreference = 'SilentlyContinue'
+const LIST_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $nics = Get-NetAdapter | Select-Object Name, InterfaceDescription, Status, AdminStatus, MacAddress, LinkSpeed, InterfaceGuid, ifIndex
 $wmi = @(Get-CimInstance Win32_NetworkAdapterConfiguration)
 $result = foreach ($n in $nics) {
@@ -65,61 +78,113 @@ $result = foreach ($n in $nics) {
   }
 }
 $result = @($result | Group-Object if_index | ForEach-Object { $_.Group[0] })
-$json = $result | ConvertTo-Json -Depth 4 -Compress
-[IO.File]::WriteAllText($env:IPS_LIST_OUT, $json, (New-Object System.Text.UTF8Encoding($false)))
+ConvertTo-Json -InputObject @($result) -Depth 4 -Compress
 "#;
 
-/// 枚举系统全部网卡及其当前配置
-#[tauri::command]
-pub fn list_adapters() -> Result<Vec<AdapterInfo>, String> {
-    let script_path = std::env::temp_dir().join("ipswitcher_list_adapters.ps1");
-    let json_path = std::env::temp_dir().join("ipswitcher_list_adapters.json");
-    fs::write(&script_path, LIST_SCRIPT).map_err(|e| format!("临时脚本写入失败：{e}"))?;
-
-    let mut cmd = Command::new("powershell");
-    cmd.args([
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        &script_path.to_string_lossy(),
-    ]);
-    cmd.env("IPS_LIST_OUT", &json_path);
-    suppress_window(&mut cmd);
-    let output = cmd.output().map_err(|e| format!("网卡信息读取失败：{e}"))?;
-
-    let _ = fs::remove_file(&script_path);
-
-    let text = match fs::read_to_string(&json_path) {
-        Ok(t) => t,
-        Err(e) => {
-            let err = decode_bytes(&output.stderr).trim().to_string();
-            return Err(format!("网卡信息读取失败：{e}；{err}"));
-        }
-    };
-    let _ = fs::remove_file(&json_path);
-
-    let text = text.trim_start_matches('\u{feff}').trim().to_string();
-    if text.is_empty() {
-        let err = decode_bytes(&output.stderr).trim().to_string();
-        return Err(format!("未读取到网卡信息：{err}"));
-    }
-
-    let trimmed = text.trim();
-    let arr_text = if trimmed.starts_with('[') {
-        trimmed.to_string()
-    } else {
-        format!("[{trimmed}]")
-    };
-    let adapters: Vec<AdapterInfo> =
-        serde_json::from_str(&arr_text).map_err(|e| format!("网卡信息解析失败：{e}"))?;
-    Ok(adapters)
+#[derive(Clone, Serialize)]
+pub struct AdapterSnapshot {
+    revision: u64,
+    adapters: Vec<AdapterInfo>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Default)]
+pub struct AdapterSnapshots {
+    cache: Mutex<Option<(Instant, AdapterSnapshot)>>,
+    refresh_due: Mutex<Option<Instant>>,
+}
+
+fn enumerate_adapters() -> Result<Vec<AdapterInfo>, String> {
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", LIST_SCRIPT]);
+    suppress_window(&mut cmd);
+    let output = cmd.output().map_err(|e| format!("网卡信息读取失败：{e}"))?;
+    if !output.status.success() {
+        return Err(format!("网卡信息读取失败：{}", decode_bytes(&output.stderr).trim()));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|e| format!("网卡信息解析失败：{e}"))
+}
+
+fn refresh_adapter_snapshot(app: &AppHandle, force: bool, requested_at: Instant) -> Result<AdapterSnapshot, String> {
+        let state = app.state::<AdapterSnapshots>();
+        let mut cache = state.cache.lock().map_err(|_| "网卡缓存不可用".to_string())?;
+        if let Some((updated, snapshot)) = cache.as_ref() {
+            if *updated >= requested_at || (!force && updated.elapsed() < Duration::from_secs(2)) {
+                return Ok(snapshot.clone());
+            }
+        }
+
+        let adapters = enumerate_adapters()?;
+        let completed_at = Instant::now();
+        if let Some((updated, existing)) = cache.as_mut() {
+            if existing.adapters == adapters {
+                *updated = completed_at;
+                return Ok(existing.clone());
+            }
+        }
+        let revision = cache.as_ref().map_or(1, |(_, snapshot)| snapshot.revision + 1);
+        let snapshot = AdapterSnapshot { revision, adapters };
+        *cache = Some((completed_at, snapshot.clone()));
+        let _ = app.emit("adapters-changed", &snapshot);
+        Ok(snapshot)
+}
+
+/// 两个窗口共用缓存。请求若与上一次实际查询重叠，则直接复用其结果。
+#[tauri::command]
+pub async fn list_adapters(app: AppHandle, force: bool) -> Result<AdapterSnapshot, String> {
+    let requested_at = Instant::now();
+    tauri::async_runtime::spawn_blocking(move || refresh_adapter_snapshot(&app, force, requested_at))
+    .await
+    .map_err(|e| format!("网卡查询任务失败：{e}"))?
+}
+
+/// 共用一次延迟复查，发起操作的窗口关闭后仍会执行。
+#[tauri::command]
+pub fn schedule_adapter_refresh(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AdapterSnapshots>();
+    let due = Instant::now() + Duration::from_millis(3500);
+    let already_pending = {
+        let mut pending = state.refresh_due.lock().map_err(|_| "网卡缓存不可用".to_string())?;
+        pending.replace(due).is_some()
+    };
+    if already_pending {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AdapterSnapshots>();
+        loop {
+            let delay = {
+                let Ok(mut pending) = state.refresh_due.lock() else { return };
+                let Some(due) = *pending else { return };
+                let delay = due.saturating_duration_since(Instant::now());
+                if delay.is_zero() {
+                    *pending = None;
+                }
+                delay
+            };
+            if delay.is_zero() {
+                let _ = refresh_adapter_snapshot(&app, true, Instant::now());
+                break;
+            }
+            std::thread::sleep(delay);
+        }
+    });
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct AdapterTrafficCounters {
     pub sent_bytes: u64,
     pub received_bytes: u64,
+    pub sampled_at: u64,
+}
+
+#[cfg(target_os = "windows")]
+type TrafficSamples = std::collections::HashMap<(Option<u32>, String), (Instant, AdapterTrafficCounters)>;
+
+#[derive(Default)]
+pub struct TrafficCache {
+    #[cfg(target_os = "windows")]
+    samples: Mutex<TrafficSamples>,
 }
 
 /// GetIfTable2 分配的网卡表由 FreeMibTable 释放。
@@ -135,10 +200,22 @@ impl Drop for IfTable {
     }
 }
 
-/// 通过 Windows IP Helper API 读取指定网卡的累计收发字节数，不启动外部进程。
 #[cfg(target_os = "windows")]
-#[tauri::command]
-pub fn get_adapter_traffic(name: String) -> Result<AdapterTrafficCounters, String> {
+fn read_interface(name: &str, if_index: Option<u32>) -> Result<MIB_IF_ROW2, String> {
+    let name_utf16: Vec<u16> = name.encode_utf16().collect();
+    let matches_alias = |row: &MIB_IF_ROW2| {
+        let end = row.Alias.iter().position(|unit| *unit == 0).unwrap_or(row.Alias.len());
+        row.Alias[..end] == name_utf16
+    };
+    if let Some(index) = if_index.filter(|index| *index != 0) {
+        let mut row: MIB_IF_ROW2 = unsafe { std::mem::zeroed() };
+        row.InterfaceIndex = index;
+        if unsafe { GetIfEntry2(&mut row) } == 0 && matches_alias(&row) {
+            return Ok(row);
+        }
+    }
+
+    // 旧快照的索引可能在网卡重启后变化，按别名保留兼容路径。
     let mut raw_table: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
     let result = unsafe { GetIfTable2(&mut raw_table) };
     let table = IfTable(raw_table);
@@ -149,36 +226,50 @@ pub fn get_adapter_traffic(name: String) -> Result<AdapterTrafficCounters, Strin
         return Err("Windows 未返回网卡统计表".to_string());
     }
 
-    let name_utf16: Vec<u16> = name.encode_utf16().collect();
-    let row = unsafe {
+    unsafe {
         let table_ref = &*table.0;
         std::slice::from_raw_parts(
             table_ref.Table.as_ptr(),
             table_ref.NumEntries as usize,
         )
         .iter()
-        .find(|row| {
-            let end = row
-                .Alias
-                .iter()
-                .position(|unit| *unit == 0)
-                .unwrap_or(row.Alias.len());
-            &row.Alias[..end] == name_utf16.as_slice()
-        })
+        .find(|row| matches_alias(row))
         .copied()
     }
-    .ok_or_else(|| format!("未找到网卡“{name}”的统计信息"))?;
+    .ok_or_else(|| format!("未找到网卡“{name}”的统计信息"))
+}
 
-    Ok(AdapterTrafficCounters {
+/// 以约一秒的粒度共享同一接口的原生采样，并返回真实采样时间。
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn get_adapter_traffic(
+    state: tauri::State<'_, TrafficCache>,
+    name: String,
+    if_index: Option<u32>,
+) -> Result<AdapterTrafficCounters, String> {
+    let mut samples = state.samples.lock().map_err(|_| "流量缓存不可用".to_string())?;
+    samples.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(5));
+    let key = (if_index, name);
+    if let Some((at, counters)) = samples.get(&key) {
+        if at.elapsed() < Duration::from_millis(900) {
+            return Ok(*counters);
+        }
+    }
+    let row = read_interface(&key.1, if_index)?;
+    let counters = AdapterTrafficCounters {
         sent_bytes: row.OutOctets,
         received_bytes: row.InOctets,
-    })
+        sampled_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
+    };
+    samples.insert(key, (Instant::now(), counters));
+    Ok(counters)
 }
 
 /// 桌面版本面向 Windows；该占位实现让其他平台仍可完成编译。
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
-pub fn get_adapter_traffic(_name: String) -> Result<AdapterTrafficCounters, String> {
+pub fn get_adapter_traffic(name: String, if_index: Option<u32>) -> Result<AdapterTrafficCounters, String> {
+    let _ = (name, if_index);
     Err("流量监控仅支持 Windows".to_string())
 }
 
