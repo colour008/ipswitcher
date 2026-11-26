@@ -63,7 +63,7 @@ pub struct AppConfig {
     /// 挂件选中的网卡接口别名
     #[serde(default)]
     pub widget_adapter: Option<String>,
-    /// 挂件背景不透明度（0.0 ~ 1.0，0 为全透明），缺省 0.92
+    /// 挂件背景不透明度（0.0 ~ 1.0，0 为全透明），缺省 0.75
     #[serde(default)]
     pub widget_opacity: Option<f64>,
     /// 挂件窗口逻辑宽度（像素）
@@ -75,6 +75,9 @@ pub struct AppConfig {
     /// 界面主题：light / dark，缺省按深色处理
     #[serde(default)]
     pub theme: Option<String>,
+    /// 挂件独立主题偏好；为 None 时跟随主界面全局 theme
+    #[serde(default)]
+    pub widget_theme: Option<String>,
     /// 启动管理员权限询问是否已被用户选择“暂不”（置 true 后不再自动弹窗，可在设置页手动启用）
     #[serde(default)]
     pub admin_prompt_dismissed: Option<bool>,

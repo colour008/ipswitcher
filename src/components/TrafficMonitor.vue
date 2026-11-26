@@ -440,7 +440,7 @@ onUnmounted(() => {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
-	color: var(--text-secondary);
+	color: var(--metric-color);
 	font-size: 10px;
 }
 .metric-label :deep(.el-icon) {
@@ -450,7 +450,7 @@ onUnmounted(() => {
 .metric-current > strong {
 	color: var(--metric-color);
 	font-size: 12px;
-	font-weight: 650;
+	font-weight: 400;
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }

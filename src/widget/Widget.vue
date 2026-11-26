@@ -14,6 +14,8 @@ import {
 	Bottom,
 	ArrowDown,
 	Check,
+	Sunny,
+	Moon,
 } from '@element-plus/icons-vue';
 import {
 	getCurrentWindow,
@@ -33,6 +35,7 @@ import {
 	restoreMainWindow,
 	setWidgetAdapter,
 	setWidgetOpacity,
+	setWidgetTheme,
 	saveWidgetSize,
 	setWidgetPinned,
 	onWidgetPinChanged,
@@ -52,7 +55,7 @@ const trafficMonitorEnabled = computed(() => appConfig.value !== null
 let configRequest = 0;
 const applying = ref<null | 'dhcp' | 'static'>(null);
 /// 背景不透明度（0.0 ~ 1.0），仅作用于卡片背景，字体始终保持不透明
-const opacity = ref<number>(0.92);
+const opacity = ref<number>(0.75);
 /// 挂件固定基线高度，纵向不可调整
 const BASE_HEIGHT = 246;
 /// 横向拉宽区间（逻辑像素）
@@ -63,6 +66,35 @@ const selectOpen = ref<boolean>(false);
 const SELECT_MENU_MAX_HEIGHT = 180;
 /// 固定（鼠标穿透）状态：固定后位置锁定、停用拖拽缩放与悬停交互
 const pinned = ref<boolean>(false);
+/// 当前挂件有效主题：优先挂件独立偏好，缺省跟随主界面全局主题
+const theme = ref<'light' | 'dark'>('dark');
+
+function applyWidgetTheme(t: 'light' | 'dark') {
+	theme.value = t;
+	document.documentElement.classList.toggle('dark', t === 'dark');
+}
+
+/// 解析挂件应使用的主题：独立偏好优先，否则跟随全局 theme
+function resolveWidgetTheme(cfg: AppConfig): 'light' | 'dark' {
+	if (cfg.widget_theme === 'light' || cfg.widget_theme === 'dark') return cfg.widget_theme;
+	return cfg.theme === 'light' ? 'light' : 'dark';
+}
+
+/// 在挂件上自主切换主题：只记录挂件独立偏好，不改动主界面全局主题
+async function toggleWidgetTheme() {
+	const next = theme.value === 'dark' ? 'light' : 'dark';
+	const previous = theme.value;
+	applyWidgetTheme(next);
+	if (appConfig.value) {
+		try {
+			await setWidgetTheme(next);
+			appConfig.value.widget_theme = next;
+		} catch (error) {
+			applyWidgetTheme(previous);
+			ElMessage.error(String(error));
+		}
+	}
+}
 /// 「暂无固定 IP 方案」自绘提示框是否显示
 const showNoProfile = ref<boolean>(false);
 const uploadRate = ref(0);
@@ -78,11 +110,12 @@ let trafficBaseline: {
 	at: number;
 } | null = null;
 
-/// 由背景透明度派生各处 alpha，以数值直接写入 CSS 变量（rgba alpha 内 calc 乘法在 WebView 中会失效）
+/// 由背景透明度派生背景、边框和分隔色的透明比例
 const styleVars = computed(() => ({
 	'--widget-bg-alpha': opacity.value,
-	'--root-border-alpha': 0.12 * opacity.value,
-	'--select-bg-alpha': 0.035 * opacity.value,
+	'--root-border-alpha': `${10 * opacity.value}%`,
+	'--select-bg-alpha': `${3.5 * opacity.value}%`,
+	'--widget-highlight-alpha': `${12 * opacity.value}%`,
 }));
 
 /// 网卡菜单展开期间临时扩展窗口底部，不将临时尺寸写入配置
@@ -190,7 +223,8 @@ async function reloadConfig() {
 	if (disposed || request !== configRequest) return;
 	const firstLoad = appConfig.value === null;
 	appConfig.value = config;
-	opacity.value = config.widget_opacity ?? 0.92;
+	applyWidgetTheme(resolveWidgetTheme(config));
+	opacity.value = config.widget_opacity ?? 0.75;
 	if (!firstLoad) selectAvailableAdapter(config.default_adapter, currentName.value, config.widget_adapter);
 }
 
@@ -532,7 +566,7 @@ async function openMain() {
 <template>
 	<el-config-provider :locale="zhCn">
 		<div
-			class="widget-root dark"
+			class="widget-root"
 			:class="{ pinned }"
 			:style="styleVars"
 			@pointerdown="onDragStart"
@@ -555,7 +589,7 @@ async function openMain() {
 				<div class="widget-toolbar">
 					<div class="opacity-control">
 						<el-tooltip
-							content="调整背景透明度"
+							content="背景透明度"
 							placement="top"
 							popper-class="app-tip widget-opacity-tip">
 							<el-slider
@@ -571,6 +605,14 @@ async function openMain() {
 						</el-tooltip>
 					</div>
 					<div class="info-actions">
+						<el-tooltip
+							:content="theme === 'dark' ? '切换到浅色' : '切换到深色'"
+							placement="top"
+							popper-class="app-tip widget-control-tip">
+							<button class="icon-btn" @click="toggleWidgetTheme">
+								<el-icon><Sunny v-if="theme === 'dark'" /><Moon v-else /></el-icon>
+							</button>
+						</el-tooltip>
 						<el-tooltip
 							:content="
 								pinned
@@ -679,17 +721,17 @@ async function openMain() {
 					<div v-if="trafficMonitorEnabled" class="traffic-panel">
 						<div
 							class="traffic-metric traffic-up"
-							:title="`上行 ${formatTrafficRate(uploadRate)}`">
+							:title="`上传 ${formatTrafficRate(uploadRate)}`">
 							<span class="traffic-label"
-								><el-icon><Top /></el-icon>上行</span
+								><el-icon><Top /></el-icon>上传</span
 							>
 							<strong>{{ formatTrafficRate(uploadRate) }}</strong>
 						</div>
 						<div
 							class="traffic-metric traffic-down"
-							:title="`下行 ${formatTrafficRate(downloadRate)}`">
+							:title="`下载 ${formatTrafficRate(downloadRate)}`">
 							<span class="traffic-label"
-								><el-icon><Bottom /></el-icon>下行</span
+								><el-icon><Bottom /></el-icon>下载</span
 							>
 							<strong>{{
 								formatTrafficRate(downloadRate)
@@ -702,7 +744,7 @@ async function openMain() {
 					<el-tooltip
 						content="打开主窗口"
 						placement="top"
-						popper-class="app-tip">
+						popper-class="app-tip widget-control-tip">
 						<button class="icon-btn" @click="openMain">⤢</button>
 					</el-tooltip>
 				</div>
@@ -814,6 +856,7 @@ async function openMain() {
 
 <style scoped>
 .widget-root {
+	--widget-divider: color-mix(in srgb, var(--panel-border) 72%, transparent);
 	width: 100%;
 	height: 100%;
 	display: flex;
@@ -821,12 +864,23 @@ async function openMain() {
 	/* 背景与边框透明度跟随全局背景 alpha，字体保持不透明 */
 	background:
 		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--widget-glass-sheen, #fff) var(--widget-highlight-alpha, 9%), transparent),
+			transparent 44%
+		),
+		linear-gradient(
 			135deg,
-			rgba(76, 141, 255, var(--select-bg-alpha, 0.06)),
+			color-mix(in srgb, var(--accent) var(--select-bg-alpha, 3.5%), transparent),
 			transparent 48%
 		),
-		rgba(18, 19, 23, var(--widget-bg-alpha, 0.92));
-	border: 1px solid rgba(255, 255, 255, var(--root-border-alpha, 0.12));
+		rgb(var(--widget-rgb) / var(--widget-bg-alpha, 0.75));
+	-webkit-backdrop-filter: blur(18px) saturate(140%);
+	backdrop-filter: blur(18px) saturate(140%);
+	border: 1px solid color-mix(
+		in srgb,
+		var(--accent) var(--root-border-alpha, 7.5%),
+		transparent
+	);
 	border-radius: 10px;
 	overflow: hidden;
 	font-size: 10px;
@@ -834,7 +888,15 @@ async function openMain() {
 		'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
 	font-synthesis: none;
 	position: relative;
-	color: #e6e8eb;
+	color: var(--text-primary);
+}
+
+html.dark .widget-root {
+	--widget-glass-sheen: rgba(255, 255, 255, 0.3);
+}
+
+html:not(.dark) .widget-root {
+	--widget-glass-sheen: rgba(255, 255, 255, 0.8);
 }
 
 .widget-root :deep(.el-button),
@@ -860,6 +922,7 @@ async function openMain() {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	min-height: 26px;
 	min-width: 0;
 }
 
@@ -877,7 +940,7 @@ async function openMain() {
 	right: 7px;
 	top: -4px;
 	height: 1px;
-	background: rgba(255, 255, 255, 0.18);
+	background: var(--widget-divider);
 	pointer-events: none;
 }
 
@@ -885,7 +948,7 @@ async function openMain() {
 	box-sizing: border-box;
 	width: 100%;
 	min-width: 0;
-	height: 28px;
+	height: 30px;
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -893,7 +956,7 @@ async function openMain() {
 	border: 1px solid transparent;
 	border-radius: 8px;
 	background: transparent;
-	color: #e6e8eb;
+	color: var(--text-primary);
 	font: inherit;
 	font-size: 10px;
 	text-align: left;
@@ -906,11 +969,11 @@ async function openMain() {
 .adapter-trigger.is-open {
 	border-color: transparent;
 	background: transparent;
-	color: #8db6ff;
+	color: var(--accent);
 }
 .adapter-trigger:hover .adapter-arrow,
 .adapter-trigger.is-open .adapter-arrow {
-	color: #8db6ff;
+	color: var(--accent);
 }
 .adapter-current {
 	flex: 1;
@@ -921,7 +984,7 @@ async function openMain() {
 }
 .adapter-arrow {
 	flex: 0 0 auto;
-	color: #9aa3b1;
+	color: var(--text-secondary);
 	font-size: 10px;
 	transition: transform 0.16s ease;
 }
@@ -955,17 +1018,17 @@ async function openMain() {
 	border: 0;
 	border-radius: 7px;
 	background: transparent;
-	color: #dce1e9;
+	color: var(--text-primary);
 	font: inherit;
 	text-align: left;
 	cursor: pointer;
 }
 .adapter-option:hover {
-	background: rgba(255, 255, 255, 0.07);
+	background: var(--settings-card-bg);
 }
 .adapter-option.is-selected {
-	background: rgba(76, 141, 255, 0.16);
-	color: #8db6ff;
+	background: var(--accent-soft);
+	color: var(--accent);
 }
 .adapter-option-copy {
 	flex: 1;
@@ -986,52 +1049,55 @@ async function openMain() {
 	font-weight: 600;
 }
 .adapter-option-copy small {
-	color: #929baa;
+	color: var(--text-secondary);
 	font-size: 9px;
 }
 .adapter-option-check {
 	flex: 0 0 auto;
-	color: #4c8dff;
+	color: var(--accent);
 	font-size: 11px;
 }
 .adapter-empty {
 	padding: 10px 8px;
-	color: #929baa;
+	color: var(--text-secondary);
 	font-size: 10px;
 	text-align: center;
 }
 
 .icon-btn {
+	box-sizing: border-box;
 	flex-shrink: 0;
 	margin-left: auto;
+	width: 26px;
+	height: 26px;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	border: none;
 	background: transparent;
-	color: #c3c8cf;
+	color: var(--text-secondary);
 	cursor: pointer;
-	font-size: 13px;
+	font-size: 12px;
 	line-height: 1;
-	padding: 4px 5px;
-	border-radius: 4px;
+	padding: 0;
+	border-radius: 7px;
 }
 
 .icon-btn:hover {
-	color: #4c8dff;
-	background: rgba(76, 141, 255, 0.16);
+	color: var(--accent);
+	background: var(--accent-soft);
 }
 
 .icon-btn.is-active {
-	color: #4c8dff;
-	background: rgba(76, 141, 255, 0.22);
+	color: var(--accent);
+	background: var(--accent-soft);
 }
 
 .info-actions {
 	flex: 0 0 auto;
 	display: flex;
 	align-items: center;
-	gap: 4px;
+	gap: 2px;
 	margin-left: auto;
 	white-space: nowrap;
 }
@@ -1042,10 +1108,11 @@ async function openMain() {
 
 .opacity-control {
 	box-sizing: border-box;
-	flex: 0 0 100px;
-	width: 100px;
+	flex: 1 1 90px;
+	width: auto;
+	max-width: 180px;
 	min-width: 0;
-	/* 最小值时滑块手柄中心与“状态”两字的中心落在同一竖线上 */
+	/* 滑块手柄在最小值时与“状态”文字中心保持竖向对齐 */
 	margin-left: 15px;
 	padding: 0;
 }
@@ -1053,7 +1120,8 @@ async function openMain() {
 .status-summary {
 	box-sizing: border-box;
 	position: relative;
-	min-height: 28px;
+	height: 30px;
+	min-height: 30px;
 	display: flex;
 	align-items: center;
 	gap: 6px;
@@ -1074,13 +1142,13 @@ async function openMain() {
 	right: 7px;
 	bottom: 0;
 	height: 1px;
-	background: rgba(255, 255, 255, 0.18);
+	background: var(--widget-divider);
 	pointer-events: none;
 }
 
 .summary-label {
 	flex: 0 0 auto;
-	color: #9199a6;
+	color: var(--text-secondary);
 	font-size: 9px;
 	letter-spacing: 0.01em;
 }
@@ -1100,6 +1168,7 @@ async function openMain() {
 	align-items: center;
 	justify-content: flex-end;
 	gap: 8px;
+	white-space: nowrap;
 }
 
 .info-list {
@@ -1120,7 +1189,7 @@ async function openMain() {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(70px, 0.68fr);
 	align-items: stretch;
-	gap: 8px;
+	gap: 10px;
 	min-height: 72px;
 }
 
@@ -1138,7 +1207,7 @@ async function openMain() {
 .info-label {
 	width: 36px;
 	flex-shrink: 0;
-	color: #9199a6;
+	color: var(--text-secondary);
 	font-size: 9px;
 	letter-spacing: 0.01em;
 }
@@ -1148,7 +1217,7 @@ async function openMain() {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: #e6e8eb;
+	color: var(--text-primary);
 	font-variant-numeric: tabular-nums;
 }
 
@@ -1158,9 +1227,9 @@ async function openMain() {
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
-	gap: 14px;
+	gap: 12px;
 	padding: 6px 0 6px 10px;
-	border-left: 1px solid rgba(255, 255, 255, 0.16);
+	border-left: 1px solid var(--widget-divider);
 }
 
 .traffic-metric {
@@ -1179,7 +1248,6 @@ async function openMain() {
 	align-items: center;
 	justify-content: center;
 	gap: 3px;
-	color: #9aa3b1;
 	font-size: 9px;
 }
 
@@ -1197,14 +1265,16 @@ async function openMain() {
 	text-align: center;
 }
 
+.traffic-up .traffic-label,
 .traffic-up .traffic-label .el-icon,
 .traffic-up strong {
-	color: #78aaff;
+	color: var(--accent);
 }
 
+.traffic-down .traffic-label,
 .traffic-down .traffic-label .el-icon,
 .traffic-down strong {
-	color: #4adea0;
+	color: var(--success);
 }
 
 /* 状态信息与操作栏保持同一字体体系 */
@@ -1226,10 +1296,10 @@ async function openMain() {
 	gap: 4px;
 }
 .status-summary .status-tag.status-on :deep(.el-tag__content) {
-	color: #4ade80 !important;
+	color: var(--success) !important;
 }
 .status-summary .status-tag.status-off :deep(.el-tag__content) {
-	color: #f56c6c !important;
+	color: var(--danger) !important;
 }
 .status-summary .status-tag .el-icon {
 	width: 14px;
@@ -1243,26 +1313,26 @@ async function openMain() {
 	align-items: center;
 	gap: 4px;
 	font-size: 10px;
-	color: #ffad66;
+	color: var(--update-accent);
 }
 .summary-metrics .speed-row .el-icon {
 	width: 14px;
 	flex-shrink: 0;
 	font-size: 11px;
-	color: #ffad66;
+	color: var(--update-accent);
 }
 
 /* DHCP 标签：与主窗一致的亮绿配色（:deep 强制覆盖 element 内部变量） */
 .status-summary :deep(.tag-dhcp) {
-	background: rgba(74, 222, 128, 0.18) !important;
+	background: rgba(74, 222, 128, 0) !important;
 	border-color: rgba(74, 222, 128, 0.45) !important;
-	color: #4ade80 !important;
+	color: var(--success) !important;
 }
 
 .status-summary :deep(.tag-static) {
-	background: rgba(245, 108, 108, 0.16) !important;
+	background: rgba(245, 108, 108, 0) !important;
 	border-color: rgba(245, 108, 108, 0.4) !important;
-	color: #f56c6c !important;
+	color: var(--danger) !important;
 }
 
 .actions {
@@ -1281,7 +1351,7 @@ async function openMain() {
 	right: 7px;
 	top: -4px;
 	height: 1px;
-	background: rgba(255, 255, 255, 0.18);
+	background: var(--widget-divider);
 	pointer-events: none;
 }
 
@@ -1296,7 +1366,7 @@ async function openMain() {
 	border-bottom: 0;
 	background: transparent !important;
 	box-shadow: none !important;
-	color: #aeb6c2;
+	color: var(--text-secondary);
 	font-size: 10px;
 	font-weight: 600;
 	border-radius: 0;
@@ -1304,7 +1374,7 @@ async function openMain() {
 }
 
 .actions .el-button.is-current {
-	color: #78aaff;
+	color: var(--accent);
 }
 
 .actions .el-button.is-current::after {
@@ -1317,23 +1387,23 @@ async function openMain() {
 	border-radius: 999px;
 	background: linear-gradient(
 		90deg,
-		rgba(76, 141, 255, 0),
-		#4c8dff 24%,
-		#4c8dff 76%,
-		rgba(76, 141, 255, 0)
+		color-mix(in srgb, var(--accent) 0%, transparent),
+		var(--accent) 24%,
+		var(--accent) 76%,
+		color-mix(in srgb, var(--accent) 0%, transparent)
 	);
 }
 
 .actions .el-button:not(.is-current):hover:not(:disabled) {
-	color: #fff;
+	color: var(--text-primary);
 }
 
 .actions .el-button.is-current:hover:not(:disabled) {
-	color: #a9c9ff;
+	color: var(--accent);
 }
 
 .actions .el-button:disabled {
-	color: #78808d;
+	color: var(--text-secondary);
 	opacity: 0.65;
 }
 
@@ -1348,8 +1418,8 @@ async function openMain() {
 	border-radius: 999px;
 	background: linear-gradient(
 		90deg,
-		rgba(255, 255, 255, 0.08),
-		#d9e7ff
+		var(--panel-border),
+		var(--accent)
 	) !important;
 }
 
@@ -1362,8 +1432,8 @@ async function openMain() {
 	width: 8px;
 	height: 8px;
   margin-bottom: 4px;
-	border: 2px solid #8db6ff;
-	background: #eaf2ff;
+	border: 2px solid var(--accent);
+	background: var(--panel-bg);
 	position: relative;
 }
 .opacity-slider :deep(.el-slider__button::after) {
@@ -1444,7 +1514,8 @@ async function openMain() {
 	max-width: 84%;
 	padding: 9px;
 	border-radius: 7px;
-	background: #26282f;
+	background: var(--panel-bg);
+	border: 1px solid var(--panel-border);
 	box-shadow: none;
 	user-select: none;
 	-webkit-user-select: none;
@@ -1455,7 +1526,7 @@ async function openMain() {
 	gap: 5px;
 	font-size: 9.5px;
 	line-height: 1.35;
-	color: #c3c8cf;
+	color: var(--text-primary);
 }
 .np-icon {
 	flex-shrink: 0;

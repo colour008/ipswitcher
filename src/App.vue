@@ -17,6 +17,7 @@ import {
 	onMainVisibilityChanged,
 	onTrafficMonitorChanged,
 	onWidgetAdapterChanged,
+	onConfigChanged,
 	getAutostart,
 	setAutostart,
 	createDesktopShortcut,
@@ -37,6 +38,8 @@ import { useScopedListeners } from '@/composables/useScopedListeners';
 import AdapterList from '@/components/AdapterList.vue';
 import TrafficMonitor from '@/components/TrafficMonitor.vue';
 import AdapterDetail from '@/components/AdapterDetail.vue';
+import wechatDonationQr from '@/assets/donation/wechat-qr.png';
+import alipayDonationQr from '@/assets/donation/alipay-qr.png';
 
 import {
 	Setting,
@@ -80,6 +83,9 @@ const updateVisible = ref(false);
 const updateInfo = ref<UpdateInfo | null>(null);
 const updateAvailable = ref(false);
 const checkingUpdate = ref(false);
+const supportHovered = ref(false);
+const supportPinned = ref(false);
+const supportPopoverVisible = computed(() => supportHovered.value || supportPinned.value);
 const sidebarWidth = ref(350);
 const theme = ref<'light' | 'dark'>('dark');
 const mainWindow = getCurrentWindow();
@@ -128,13 +134,43 @@ function handleOpenDevTools() {
 }
 
 function onDocPointerDown(e: MouseEvent) {
-	if (!devMenuVisible.value) return;
-	if ((e.target as HTMLElement).closest('.dev-context-menu')) return;
-	closeDevMenu();
+	const target = e.target as HTMLElement | null;
+	if (supportPopoverVisible.value
+		&& !target?.closest('.settings-support-trigger')
+		&& !target?.closest('.support-donation-popover')) {
+		closeSupportPopover();
+	}
+	if (devMenuVisible.value
+		&& !target?.closest('.dev-context-menu')) closeDevMenu();
 }
 
 function onDocKeydown(e: KeyboardEvent) {
-	if (e.key === 'Escape') closeDevMenu();
+	if (e.key === 'Escape') {
+		closeDevMenu();
+		closeSupportPopover();
+	}
+}
+
+function onSupportVisibilityChange(visible: boolean) {
+	supportHovered.value = visible;
+}
+
+function toggleSupportPopover() {
+	if (supportPinned.value) {
+		closeSupportPopover();
+	} else {
+		supportPinned.value = true;
+	}
+}
+
+function closeSupportPopover() {
+	supportPinned.value = false;
+	supportHovered.value = false;
+}
+
+function closeSettings() {
+	settingsVisible.value = false;
+	closeSupportPopover();
 }
 
 const MIN_WIDTH = 220;
@@ -186,7 +222,7 @@ function toggleTheme(event: MouseEvent) {
 		y: event.clientY,
 	});
 	appConfig.value.theme = nextTheme;
-	void saveConfig(appConfig.value);
+	void saveConfig(appConfig.value).then(() => emitConfigChanged());
 }
 
 async function toggleMaximize() {
@@ -277,6 +313,14 @@ onMounted(async () => {
 		registerListener(onWidgetAdapterChanged((name) => {
 			appConfig.value.default_adapter = name;
 			appConfig.value.widget_adapter = name;
+		})),
+		registerListener(onConfigChanged(() => {
+			void getConfig()
+				.then((cfg) => {
+					appConfig.value.theme = cfg.theme;
+					applyTheme(cfg.theme === 'light' ? 'light' : 'dark');
+				})
+				.catch(() => undefined);
 		})),
 		registerListener(mainWindow.onResized(() => {
 			if (windowStateSyncTimer) clearTimeout(windowStateSyncTimer);
@@ -391,7 +435,7 @@ async function saveDefaultAdapter() {
 		appConfig.value.widget_visible = showDesktopWidget;
 		await setAutostart(changes.autostart);
 		ElMessage.success('设置已保存');
-		settingsVisible.value = false;
+		closeSettings();
 	} catch (error) {
 		ElMessage.error(String(error));
 	} finally {
@@ -624,12 +668,50 @@ function openUpdateDialog() {
 					<div class="settings-header-copy">
 						<div class="settings-title">软件设置</div>
 					</div>
+					<el-tooltip
+						:visible="supportPopoverVisible"
+						placement="bottom-end"
+						:show-after="120"
+						:hide-after="120"
+						:enterable="true"
+						:show-arrow="false"
+						:teleported="true"
+						popper-class="support-donation-popover"
+						@update:visible="onSupportVisibilityChange">
+						<template #content>
+							<div class="support-donation-content" role="dialog" aria-label="支持作者">
+								<div class="support-donation-heading">
+									<div>
+										<strong>☕ 请作者喝杯咖啡</strong>
+										<span>感谢支持 IPSwitcher 的开发与维护</span>
+									</div>
+									<button type="button" aria-label="关闭收款码" @click.stop="closeSupportPopover">×</button>
+								</div>
+								<div class="support-donation-options">
+									<div class="support-donation-option">
+										<img :src="wechatDonationQr" alt="微信收款码" />
+										<strong>微信</strong>
+									</div>
+									<div class="support-donation-option">
+										<img :src="alipayDonationQr" alt="支付宝收款码" />
+										<strong>支付宝</strong>
+									</div>
+								</div>
+							</div>
+						</template>
+						<el-button
+							class="settings-support-trigger"
+							text
+							aria-haspopup="dialog"
+							:aria-expanded="supportPopoverVisible"
+							@click.stop="toggleSupportPopover">☕ 支持作者</el-button>
+					</el-tooltip>
 					<el-button
 						class="settings-close"
 						:icon="Close"
 						circle
 						aria-label="关闭设置"
-						@click="settingsVisible = false" />
+						@click="closeSettings" />
 				</div>
 			</template>
 			<div class="settings-content">
@@ -737,7 +819,7 @@ function openUpdateDialog() {
 						</el-button>
 					</div>
 					<div class="settings-footer-actions">
-						<el-button class="settings-cancel-button" @click="settingsVisible = false">取消</el-button>
+						<el-button class="settings-cancel-button" @click="closeSettings">取消</el-button>
 						<el-button type="primary" class="settings-save-button" :loading="settingsSaving" @click="saveDefaultAdapter">保存设置</el-button>
 					</div>
 				</div>

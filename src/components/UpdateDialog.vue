@@ -60,7 +60,8 @@ const renderedNotes = computed(() => {
 const hasNotes = computed(() => renderedNotes.value.length > 0);
 
 function formatSize(bytes: number): string {
-  if (!bytes || bytes <= 0) return '--';
+  if (bytes < 0) return '--';
+  if (bytes === 0) return '0 KB';
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.round(bytes / 1024)} KB`;
 }
@@ -307,13 +308,8 @@ onUnmounted(cleanupProgress);
   transition: border-color 160ms ease, background-color 160ms ease;
 }
 
-.keep-config:hover,
-.keep-config.is-checked {
+.keep-config:hover {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--panel-border));
-}
-
-.keep-config.is-checked {
-  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
 }
 
 .keep-config input {

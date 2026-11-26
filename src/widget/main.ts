@@ -31,5 +31,4 @@ const app = createApp(Widget);
 
 app.mount("#app");
 
-// 挂件强制使用深色主题，不跟随系统明暗
-document.documentElement.classList.add("dark");
+// 挂件主题跟随全局配置（缺省深色），具体明暗由 Widget.vue 读取配置后应用

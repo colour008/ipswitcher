@@ -321,12 +321,12 @@ function openNetworkPanel() {
 							</div>
 							<div class="tip-device" :title="row.description">{{ row.description || '网络适配器' }}</div>
 							<div class="tip-grid">
-								<div class="tip-cell"><span>IPv4 地址</span><strong>{{ row.ipv4.join('、') || '-' }}</strong></div>
-								<div class="tip-cell"><span>链路速率</span><strong>{{ row.link_speed || '-' }}</strong></div>
-								<div class="tip-cell"><span>子网掩码</span><strong>{{ row.subnet_mask.join('、') || '-' }}</strong></div>
-								<div class="tip-cell"><span>MAC 地址</span><strong>{{ row.mac || '-' }}</strong></div>
-								<div class="tip-cell"><span>默认网关</span><strong>{{ row.gateway || '-' }}</strong></div>
-								<div class="tip-cell"><span>DNS 服务器</span><strong>{{ row.dns.join('、') || '-' }}</strong></div>
+								<div class="tip-cell"><span>IP地址</span><strong>{{ row.ipv4.join('、') || '-' }}</strong></div>
+								<div class="tip-cell"><span>速率</span><strong>{{ row.link_speed || '-' }}</strong></div>
+								<div class="tip-cell"><span>掩码</span><strong>{{ row.subnet_mask.join('、') || '-' }}</strong></div>
+								<div class="tip-cell"><span>MAC</span><strong>{{ row.mac || '-' }}</strong></div>
+								<div class="tip-cell"><span>网关</span><strong>{{ row.gateway || '-' }}</strong></div>
+								<div class="tip-cell"><span>DNS</span><strong>{{ row.dns.join('、') || '-' }}</strong></div>
 							</div>
 						</div>
 					</template>
@@ -666,37 +666,37 @@ function openNetworkPanel() {
 	background-color: var(--panel-bg) !important;
 	color: var(--text-primary) !important;
 	border: 1px solid var(--panel-border) !important;
-	border-radius: 12px !important;
-	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28) !important;
-	padding: 12px 14px !important;
-	max-width: min(420px, calc(100vw - 32px)) !important;
+	border-radius: 10px !important;
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24) !important;
+	padding: 6px 8px !important;
+	max-width: min(280px, calc(100vw - 32px)) !important;
 }
 .adapter-tip .tip-info {
-	width: min(390px, calc(100vw - 64px));
-	min-width: 270px;
+	width: min(224px, calc(100vw - 64px));
+	min-width: 176px;
 	color: var(--text-primary);
 }
 .adapter-tip .tip-heading {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 12px;
+	gap: 4px;
 }
 .adapter-tip .tip-name {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 13px;
+	font-size: 11px;
 	font-weight: 650;
 	color: var(--text-primary);
 }
 .adapter-tip .tip-status {
 	flex: none;
-	padding: 3px 7px;
+	padding: 2px 6px;
 	border-radius: 999px;
-	font-size: 10px;
-	line-height: 1.2;
+	font-size: 9px;
+	line-height: 1;
 	color: var(--success);
 	background: color-mix(in srgb, var(--success) 12%, transparent);
 }
@@ -709,37 +709,40 @@ function openNetworkPanel() {
 	background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 .adapter-tip .tip-device {
-	margin-top: 4px;
-	padding-bottom: 10px;
+	margin-top: 2px;
+	padding-bottom: 5px;
 	border-bottom: 1px solid var(--panel-border);
 	color: var(--text-secondary);
-	font-size: 10px;
-	line-height: 1.45;
+	font-size: 9px;
+	line-height: 1.4;
 	overflow-wrap: anywhere;
 }
 .adapter-tip .tip-grid {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-	column-gap: 16px;
-	row-gap: 10px;
-	padding-top: 10px;
+	column-gap: 3px;
+	row-gap: 3px;
+	padding-top: 1px;
 }
 .adapter-tip .tip-cell {
 	display: flex;
 	flex-direction: column;
 	gap: 3px;
 	min-width: 0;
-	font-size: 10px;
+	font-size: 9px;
+	line-height: 1.35;
 }
 .adapter-tip .tip-cell span {
 	color: var(--text-secondary);
-	font-size: 9px;
+	font-size: 8.5px;
+	line-height: 1.35;
 }
 .adapter-tip .tip-cell strong {
 	min-width: 0;
 	color: var(--text-primary);
-	font-size: 10px;
+	font-size: 9.5px;
 	font-weight: 550;
+	line-height: 1.35;
 	font-variant-numeric: tabular-nums;
 	overflow-wrap: anywhere;
 }

@@ -101,6 +101,9 @@ export const onWidgetAdapterChanged = (cb: (name: string) => void) =>
 export const setWidgetOpacity = (opacity: number) =>
   invoke<void>("set_widget_opacity", { opacity });
 
+export const setWidgetTheme = (theme: "light" | "dark") =>
+  invoke<void>("set_widget_theme", { theme });
+
 export const saveWidgetSize = (width: number, height: number) =>
   invoke<void>("save_widget_size", { width, height });
 

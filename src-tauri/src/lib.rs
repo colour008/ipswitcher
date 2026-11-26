@@ -77,6 +77,17 @@ fn set_widget_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     save_config(&app, &cfg)
 }
 
+/// 保存挂件独立主题偏好；显式选择后不再跟随主界面主题
+#[tauri::command]
+fn set_widget_theme(app: AppHandle, theme: String) -> Result<(), String> {
+    if theme != "light" && theme != "dark" {
+        return Err("不支持的挂件主题".to_string());
+    }
+    let mut cfg = load_config(&app);
+    cfg.widget_theme = Some(theme);
+    save_config(&app, &cfg)
+}
+
 /// 记录挂件窗口当前宽度到配置（高度固定默认值，拖拽缩放结束后由前端上报）
 #[tauri::command]
 fn save_widget_size(app: AppHandle, width: f64, _height: f64) -> Result<(), String> {
@@ -107,6 +118,7 @@ fn save_config_cmd(
     config.widget_height = current.widget_height;
     config.widget_visible = current.widget_visible;
     config.widget_adapter = current.widget_adapter;
+    config.widget_theme = current.widget_theme;
     config.autostart = current.autostart;
     config.traffic_monitor_enabled = traffic_monitor_enabled.or(current.traffic_monitor_enabled);
     config.host_history = current.host_history;
@@ -502,6 +514,7 @@ pub fn run() {
             widget_pinned,
             set_widget_adapter,
             set_widget_opacity,
+            set_widget_theme,
             save_widget_size,
             set_widget_pinned,
             autostart::set_autostart,
