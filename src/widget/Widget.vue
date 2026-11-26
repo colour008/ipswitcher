@@ -125,7 +125,7 @@ const adapter = computed(
 	() => adapters.value.find((a) => a.name === currentName.value) ?? null,
 );
 
-/// 当前网卡可套用的静态方案（挂件仅取第一个静态方案）
+/// 当前网卡可套用的固定IP方案（挂件仅取第一个固定IP方案）
 const staticProfile = computed<IpProfile | null>(() => {
 	if (!adapter.value) return null;
 	return (
@@ -540,7 +540,7 @@ function closeNoProfile() {
 async function copyInfo() {
 	const a = adapter.value;
 	if (!a) return;
-	const mode = a.dhcp_enabled ? 'DHCP' : '静态';
+	const mode = a.dhcp_enabled ? 'DHCP' : '固定IP';
 	const lines = [
 		`网卡：${a.name}`,
 		`获取方式：${mode}`,
@@ -588,26 +588,27 @@ async function openMain() {
 			<div class="widget-body">
 				<div class="widget-toolbar">
 					<div class="opacity-control">
-						<el-tooltip
-							content="背景透明度"
-							placement="top"
-							popper-class="app-tip widget-opacity-tip">
-							<el-slider
-								v-model="opacity"
-								class="opacity-slider"
-								tooltip-class="app-tip widget-opacity-tip"
-								:min="0"
-								:max="1"
-								:step="0.05"
-								placement="top"
-								size="small"
-								@change="onOpacityChange" />
-						</el-tooltip>
+						<el-slider
+							v-model="opacity"
+							class="opacity-slider"
+							aria-label="背景透明度"
+							tooltip-class="app-tip widget-opacity-tip"
+							:min="0"
+							:max="1"
+							:step="0.05"
+							placement="right"
+							:offset="4"
+							size="small"
+							@change="onOpacityChange" />
+						<span
+							class="opacity-label"
+							:style="{ left: `${opacity * 100}%` }">背景透明度</span>
 					</div>
 					<div class="info-actions">
 						<el-tooltip
 							:content="theme === 'dark' ? '切换到浅色' : '切换到深色'"
 							placement="top"
+							:offset="4"
 							popper-class="app-tip widget-control-tip">
 							<button class="icon-btn" @click="toggleWidgetTheme">
 								<el-icon><Sunny v-if="theme === 'dark'" /><Moon v-else /></el-icon>
@@ -620,6 +621,7 @@ async function openMain() {
 									: '固定挂件（鼠标穿透）'
 							"
 							placement="top"
+							:offset="4"
 							popper-class="app-tip widget-control-tip">
 							<button
 								class="icon-btn"
@@ -633,6 +635,7 @@ async function openMain() {
 						<el-tooltip
 							content="复制网络信息"
 							placement="top"
+							:offset="4"
 							popper-class="app-tip widget-control-tip">
 							<button class="icon-btn" @click="copyInfo">
 								<el-icon><DocumentCopy /></el-icon>
@@ -641,6 +644,7 @@ async function openMain() {
 						<el-tooltip
 							content="打开主窗口"
 							placement="top"
+							:offset="4"
 							popper-class="app-tip widget-control-tip">
 							<button class="icon-btn" @click="openMain">
 								⤢
@@ -663,7 +667,7 @@ async function openMain() {
 						type="warning"
 						size="small"
 						class="tag-static"
-						>静态</el-tag
+						>固定IP</el-tag
 					>
 					<div class="summary-metrics">
 						<el-tag
@@ -719,17 +723,13 @@ async function openMain() {
 						</div>
 					</div>
 					<div v-if="trafficMonitorEnabled" class="traffic-panel">
-						<div
-							class="traffic-metric traffic-up"
-							:title="`上传 ${formatTrafficRate(uploadRate)}`">
+						<div class="traffic-metric traffic-up">
 							<span class="traffic-label"
 								><el-icon><Top /></el-icon>上传</span
 							>
 							<strong>{{ formatTrafficRate(uploadRate) }}</strong>
 						</div>
-						<div
-							class="traffic-metric traffic-down"
-							:title="`下载 ${formatTrafficRate(downloadRate)}`">
+						<div class="traffic-metric traffic-down">
 							<span class="traffic-label"
 								><el-icon><Bottom /></el-icon>下载</span
 							>
@@ -744,6 +744,7 @@ async function openMain() {
 					<el-tooltip
 						content="打开主窗口"
 						placement="top"
+						:offset="4"
 						popper-class="app-tip widget-control-tip">
 						<button class="icon-btn" @click="openMain">⤢</button>
 					</el-tooltip>
@@ -1046,7 +1047,7 @@ html:not(.dark) .widget-root {
 }
 .adapter-option-copy strong {
 	font-size: 10px;
-	font-weight: 600;
+	font-weight: 500;
 }
 .adapter-option-copy small {
 	color: var(--text-secondary);
@@ -1108,13 +1109,33 @@ html:not(.dark) .widget-root {
 
 .opacity-control {
 	box-sizing: border-box;
+	position: relative;
 	flex: 1 1 90px;
 	width: auto;
-	max-width: 180px;
+	max-width: 160px;
 	min-width: 0;
 	/* 滑块手柄在最小值时与“状态”文字中心保持竖向对齐 */
 	margin-left: 15px;
 	padding: 0;
+}
+
+.opacity-label {
+	position: absolute;
+	top: calc(100% - 1px);
+	transform: translateX(-50%);
+	z-index: 3;
+	color: var(--text-primary);
+	font-size: 8px;
+	line-height: 1.15;
+	white-space: nowrap;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.12s ease;
+}
+
+.opacity-control:hover .opacity-label,
+.opacity-control:focus-within .opacity-label {
+	opacity: 0.88;
 }
 
 .status-summary {
@@ -1261,7 +1282,7 @@ html:not(.dark) .widget-root {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-size: 10px;
-	font-weight: 500;
+	font-weight: 400;
 	text-align: center;
 }
 
@@ -1368,7 +1389,7 @@ html:not(.dark) .widget-root {
 	box-shadow: none !important;
 	color: var(--text-secondary);
 	font-size: 10px;
-	font-weight: 600;
+	font-weight: 500;
 	border-radius: 0;
 	transition: color 0.15s ease;
 }

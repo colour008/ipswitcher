@@ -832,9 +832,9 @@ async function saveProfile() {
 }
 .target-form :deep(.el-input__wrapper),
 .dns-input :deep(.el-input__wrapper) {
-	background: var(--panel-bg) !important;
-	box-shadow: 0 0 0 1px var(--panel-border) inset;
-	transition: box-shadow 0.16s ease, background-color 0.16s ease;
+	background: var(--input-bg) !important;
+	box-shadow: 0 0 0 1px var(--input-border) inset;
+	transition: box-shadow 0.16s ease;
 }
 .target-form :deep(.el-input__wrapper:hover),
 .dns-input :deep(.el-input__wrapper:hover) {
@@ -846,7 +846,7 @@ async function saveProfile() {
 }
 .target-form :deep(.el-input__inner),
 .dns-input :deep(.el-input__inner) {
-	color: var(--text-primary);
+	color: var(--input-text);
 }
 .dns-section {
 	display: flex;
@@ -1022,8 +1022,9 @@ async function saveProfile() {
 .profile-dialog-form :deep(.el-input__wrapper) {
 	min-height: 38px;
 	border-radius: 8px;
-	box-shadow: 0 0 0 1px var(--panel-border) inset;
-	transition: box-shadow 0.16s ease, background 0.16s ease;
+	background: var(--input-bg) !important;
+	box-shadow: 0 0 0 1px var(--input-border) inset;
+	transition: box-shadow 0.16s ease;
 }
 .profile-dialog-form :deep(.el-input__wrapper:hover) {
 	box-shadow: 0 0 0 1px var(--accent) inset;

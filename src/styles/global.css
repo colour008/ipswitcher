@@ -1,4 +1,5 @@
 :root {
+	color-scheme: light;
 	--app-bg: #edf0f3;
 	--panel-bg: #f5f6f8;
 	--panel-border: #dce1e7;
@@ -7,8 +8,15 @@
 	--panel-border-glass: rgba(255, 255, 255, 0.78);
 	--settings-card-bg: rgba(29, 37, 48, 0.025);
 	--settings-card-border: rgba(29, 37, 48, 0.05);
+	--adapter-hover-bg: rgba(32, 37, 43, 0.035);
 	--text-primary: #20252b;
 	--text-secondary: #68727e;
+	--input-bg: var(--panel-bg);
+	--input-border: var(--panel-border);
+	--input-text: var(--text-primary);
+	--input-placeholder: var(--text-secondary);
+	--input-hover-border: var(--accent);
+	--input-focus-border: var(--accent);
 	--accent: #3478e5;
 	--accent-soft: #e5edf9;
 	--success: #16834c;
@@ -32,6 +40,7 @@
 }
 
 html.dark {
+	color-scheme: dark;
 	--app-bg: #1e2023;
 	--panel-bg: #1a1d22;
 	--panel-border: #272b32;
@@ -40,8 +49,15 @@ html.dark {
 	--panel-border-glass: rgba(255, 255, 255, 0.08);
 	--settings-card-bg: rgba(255, 255, 255, 0.008);
 	--settings-card-border: rgba(255, 255, 255, 0.025);
+	--adapter-hover-bg: rgba(255, 255, 255, 0.04);
 	--text-primary: #e6e8eb;
 	--text-secondary: #9aa0a8;
+	--input-bg: var(--panel-bg);
+	--input-border: var(--panel-border);
+	--input-text: var(--text-primary);
+	--input-placeholder: var(--text-secondary);
+	--input-hover-border: var(--accent);
+	--input-focus-border: var(--accent);
 	--accent: #4c8dff;
 	--accent-soft: #1d2a44;
 	--success: #4ade80;
@@ -59,8 +75,27 @@ html.dark {
 	--el-table-header-bg-color: rgba(255, 255, 255, 0.04);
 }
 
+/* 组件库会在 .el-input 自身声明默认变量，因此在组件根上统一覆盖为当前主题语义色。 */
+.el-input:not(.scan-search):not(.extra-args-input) {
+	--el-input-bg-color: var(--input-bg);
+	--el-input-border-color: var(--input-border);
+	--el-input-text-color: var(--input-text);
+	--el-input-placeholder-color: var(--input-placeholder);
+	--el-input-hover-border-color: var(--input-hover-border);
+	--el-input-focus-border-color: var(--input-focus-border);
+}
+
+/* 高性能设备使用圆形揭示；页面主题本身仍在同一回调中一次性更新。 */
+::view-transition,
+::view-transition-group(root),
+::view-transition-image-pair(root),
+::view-transition-old(root),
+::view-transition-new(root) {
+	/* 转场图层只负责显示快照，不应挡住主题按钮等真实控件的点击。 */
+	pointer-events: none !important;
+}
 ::view-transition-group(root) {
-	animation-duration: 720ms;
+	animation-duration: 1200ms;
 }
 ::view-transition-old(root) {
 	animation: none;
@@ -68,7 +103,7 @@ html.dark {
 ::view-transition-new(root) {
 	position: relative;
 	z-index: 1;
-	animation: theme-reveal 720ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
+	animation: theme-reveal 1200ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
 }
 @keyframes theme-reveal {
 	from {
@@ -86,6 +121,20 @@ html.dark {
 	::view-transition-new(root) {
 		animation-duration: 1ms;
 	}
+}
+
+/* 主题在一帧内整体切换；恢复样式前短暂关闭控件自身的颜色动画。 */
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+	transition: none !important;
+}
+html.theme-switching .switch-thumb {
+	transition: left 0.15s !important;
+}
+html.theme-switching .metric-wave .wave-area,
+html.theme-switching .metric-wave .wave-line {
+	transition: d 0.35s ease !important;
 }
 
 * {
@@ -743,15 +792,19 @@ html:not(.dark) :is(.settings-dialog .settings-close-radios, .form-col .mode-rad
 	}
 }
 
-/* 默认提示气泡：统一隐藏箭头，保留轻量实色卡片样式 */
+/* 全局提示仅保留文字，避免不同主题或桌面壁纸下出现突兀的提示底色 */
 .app-tip.el-popper,
-.app-tip.el-popper.is-dark {
+.app-tip.el-popper.is-dark,
+.adapter-tip.el-popper,
+.adapter-tip.el-popper.is-dark {
 	min-height: 0;
 	padding: 4px 8px;
 	border-radius: 6px;
-	background-color: var(--panel-bg) !important;
+	background: transparent !important;
+	background-color: transparent !important;
 	color: var(--text-primary) !important;
-	border: 1px solid var(--panel-border) !important;
+	border: 0 !important;
+	box-shadow: none !important;
 	font-size: 11px;
 	line-height: 1.25;
 }

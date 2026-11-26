@@ -450,7 +450,7 @@ function openNetworkPanel() {
 	flex: 1;
 }
 .list-header :deep(.el-input__wrapper) {
-	background-color: var(--panel-bg) !important;
+	background-color: var(--input-bg) !important;
 }
 .list-title {
 	flex: none;
@@ -511,7 +511,7 @@ function openNetworkPanel() {
 	transition: background 0.15s;
 }
 .adapter-row:hover {
-	background: rgba(255, 255, 255, 0.04);
+	background: var(--adapter-hover-bg);
 }
 .adapter-row.is-pinned:not(.is-current) {
 	background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
@@ -663,11 +663,12 @@ function openNetworkPanel() {
 
 <style>
 .adapter-tip.el-popper {
-	background-color: var(--panel-bg) !important;
+	background: transparent !important;
+	background-color: transparent !important;
 	color: var(--text-primary) !important;
-	border: 1px solid var(--panel-border) !important;
+	border: 0 !important;
+	box-shadow: none !important;
 	border-radius: 10px !important;
-	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24) !important;
 	padding: 6px 8px !important;
 	max-width: min(280px, calc(100vw - 32px)) !important;
 }

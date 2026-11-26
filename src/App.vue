@@ -176,51 +176,89 @@ function closeSettings() {
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 520;
 
-function applyTheme(
-	t: 'light' | 'dark',
-	revealFrom?: { x: number; y: number },
-) {
-	const update = () => {
+let themeApplyId = 0;
+type ThemeViewTransition = {
+	finished: Promise<void>;
+};
+type ThemeTransitionHost = {
+	startViewTransition?: (callback: () => void) => ThemeViewTransition;
+};
+let themeRevealLocked = false;
+
+function canUseThemeReveal() {
+	const documentHost = document as Document & ThemeTransitionHost;
+	return (
+		typeof documentHost.startViewTransition === 'function' &&
+		!window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+		(navigator.hardwareConcurrency || 0) >= 8
+	);
+}
+
+function applyTheme(t: 'light' | 'dark', revealFrom?: { x: number; y: number }) {
+	const root = document.documentElement;
+	const currentApplyId = ++themeApplyId;
+	const documentHost = document as Document & ThemeTransitionHost;
+
+	const updateTheme = () => {
+		// 根主题与 Vue 状态在同一个更新回调中提交，控件不再分别渐变颜色。
+		root.classList.add('theme-switching');
 		theme.value = t;
-		document.documentElement.classList.toggle('dark', t === 'dark');
+		root.classList.toggle('dark', t === 'dark');
 		void setWindowTheme(t === 'dark');
 	};
-	if (!revealFrom || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-		update();
-		return;
-	}
-	const transitionDocument = document as Document & {
-		startViewTransition?: (callback: () => void) => { finished: Promise<void> };
+	const scheduleTransitionRestore = () => {
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				if (currentApplyId === themeApplyId) {
+					root.classList.remove('theme-switching');
+				}
+			});
+		});
 	};
-	if (!transitionDocument.startViewTransition) {
-		update();
-		return;
-	}
-	const root = document.documentElement;
-	const farthestX = Math.max(revealFrom.x, window.innerWidth - revealFrom.x);
-	const farthestY = Math.max(revealFrom.y, window.innerHeight - revealFrom.y);
-	root.style.setProperty('--theme-origin-x', `${revealFrom.x}px`);
-	root.style.setProperty('--theme-origin-y', `${revealFrom.y}px`);
-	root.style.setProperty(
-		'--theme-reveal-radius',
-		`${Math.hypot(farthestX, farthestY) + 24}px`,
-	);
-	const transition = transitionDocument.startViewTransition(update);
-	void transition.finished
-		.catch(() => undefined)
-		.finally(() => {
+
+	if (revealFrom && canUseThemeReveal() && documentHost.startViewTransition) {
+		// 对整窗做一次圆形揭示，避免局部快照与页面其它区域出现主题不一致。
+		const originX = revealFrom.x;
+		const originY = revealFrom.y;
+		const farthestX = Math.max(originX, window.innerWidth - originX);
+		const farthestY = Math.max(originY, window.innerHeight - originY);
+		root.style.setProperty('--theme-origin-x', `${originX}px`);
+		root.style.setProperty('--theme-origin-y', `${originY}px`);
+		root.style.setProperty(
+			'--theme-reveal-radius',
+			`${Math.hypot(farthestX, farthestY) + 24}px`,
+		);
+
+		try {
+			const transition = documentHost.startViewTransition!(updateTheme);
+			themeRevealLocked = true;
+			scheduleTransitionRestore();
+			void transition.finished
+				.catch(() => undefined)
+				.finally(async () => {
+					root.style.removeProperty('--theme-origin-x');
+					root.style.removeProperty('--theme-origin-y');
+					root.style.removeProperty('--theme-reveal-radius');
+					// 给 WebView 留出一帧清理转场快照，再开放下一次主题切换。
+					await new Promise(resolve => window.setTimeout(resolve, 0));
+					themeRevealLocked = false;
+				});
+			return;
+		} catch {
 			root.style.removeProperty('--theme-origin-x');
 			root.style.removeProperty('--theme-origin-y');
 			root.style.removeProperty('--theme-reveal-radius');
-		});
+		}
+	}
+
+	updateTheme();
+	scheduleTransitionRestore();
 }
 
 function toggleTheme(event: MouseEvent) {
+	if (themeRevealLocked) return;
 	const nextTheme = theme.value === 'dark' ? 'light' : 'dark';
-	applyTheme(nextTheme, {
-		x: event.clientX,
-		y: event.clientY,
-	});
+	applyTheme(nextTheme, { x: event.clientX, y: event.clientY });
 	appConfig.value.theme = nextTheme;
 	void saveConfig(appConfig.value).then(() => emitConfigChanged());
 }
