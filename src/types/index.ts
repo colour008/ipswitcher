@@ -62,12 +62,17 @@ export interface AppConfig {
 }
 
 export interface ScanHostResult {
-  task_id: string;
   ip: string;
   status: "online" | "offline" | "undiscovered";
   last_seen: number | null;
   hostname: string | null;
   mac: string | null;
+}
+
+export interface ScanBatch {
+  task_id: string;
+  scanned: number;
+  rows: ScanHostResult[];
 }
 
 export interface ScanDoneResult {

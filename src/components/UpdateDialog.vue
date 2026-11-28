@@ -168,25 +168,16 @@ onUnmounted(cleanupProgress);
         <span class="update-title">发现新版本</span>
         <span class="update-version-badge">{{ displayVersion(info?.latestVersion) }}</span>
       </div>
-      <div class="update-sub">当前版本 {{ displayVersion(info?.currentVersion) }}</div>
+      <div class="update-sub">
+        当前版本
+        <span class="current-version-badge">{{ displayVersion(info?.currentVersion) }}</span>
+      </div>
 
       <div class="update-notes-title">更新说明</div>
       <div v-if="hasNotes" class="update-notes">
         <div class="markdown-body" v-html="renderedNotes"></div>
       </div>
       <div v-else class="update-notes update-notes-empty">（无更新说明）</div>
-
-      <label class="keep-config" :class="{ 'is-checked': keepConfig }">
-        <input v-model="keepConfig" type="checkbox" />
-        <span class="keep-config-check" aria-hidden="true">
-          <svg v-if="keepConfig" viewBox="0 0 16 16"><path d="m3.5 8.2 3 3 6-6.4" /></svg>
-        </span>
-        <span class="keep-config-copy">
-          <strong>保留现有网卡配置</strong>
-          <small>更新后继续使用已保存的方案与设置</small>
-        </span>
-        <span class="keep-config-default">默认开启</span>
-      </label>
 
       <div v-if="info?.message" class="update-warn">{{ info.message }}</div>
     </div>
@@ -209,10 +200,23 @@ onUnmounted(cleanupProgress);
 
     <template #footer>
       <template v-if="phase === 'confirm'">
-        <el-button @click="close">稍后再说</el-button>
-        <el-button type="primary" :disabled="!info?.assetUrl" @click="startUpdate"
-          >立即更新</el-button
-        >
+        <div class="update-footer-row">
+          <label class="keep-config" :class="{ 'is-checked': keepConfig }">
+            <input v-model="keepConfig" type="checkbox" />
+            <span class="keep-config-check" aria-hidden="true">
+              <svg v-if="keepConfig" viewBox="0 0 16 16"><path d="m3.5 8.2 3 3 6-6.4" /></svg>
+            </span>
+            <span class="keep-config-copy">
+              <strong>保留现有配置</strong>
+            </span>
+          </label>
+          <div class="update-footer-actions">
+            <el-button @click="close">稍后再说</el-button>
+            <el-button type="primary" :disabled="!info?.assetUrl" @click="startUpdate"
+              >立即更新</el-button
+            >
+          </div>
+        </div>
       </template>
       <template v-else-if="phase === 'downloading'">
         <el-button :loading="cancelling" @click="onCancelDownload">取消</el-button>
@@ -263,6 +267,20 @@ onUnmounted(cleanupProgress);
   color: var(--text-secondary);
 }
 
+.current-version-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--success) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
 .update-notes-title {
   display: flex;
   align-items: center;
@@ -298,18 +316,28 @@ onUnmounted(cleanupProgress);
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 52px;
-  padding: 9px 12px;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--panel-bg) 55%, transparent);
+  gap: 8px;
+  min-height: 0;
+  padding: 0;
   cursor: pointer;
-  transition: border-color 160ms ease, background-color 160ms ease;
 }
 
 .keep-config:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--panel-border));
+  background: transparent;
+}
+
+.update-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
+.update-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .keep-config input {
@@ -365,18 +393,9 @@ onUnmounted(cleanupProgress);
   font-weight: 600;
 }
 
-.keep-config-copy small,
-.keep-config-default {
+.keep-config-copy small {
   color: var(--text-secondary);
   font-size: 11px;
-}
-
-.keep-config-default {
-  flex: none;
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
 }
 
 .update-size {

@@ -5,7 +5,6 @@ mod elevate;
 mod encoding;
 mod netcfg;
 mod process;
-mod shortcut;
 mod scanner;
 mod types;
 mod update;
@@ -497,6 +496,7 @@ pub fn run() {
             netcfg::rename_adapter,
             diag::run_diagnostic,
             diag::stop_diagnostic,
+            scanner::list_scan_subnets,
             scanner::run_host_scan,
             scanner::stop_host_scan,
             elevate::elevate_action,
@@ -519,7 +519,6 @@ pub fn run() {
             set_widget_pinned,
             autostart::set_autostart,
             autostart::get_autostart,
-            shortcut::create_desktop_shortcut,
             update::check_update,
             update::download_update,
             update::cancel_download,

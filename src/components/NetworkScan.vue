@@ -1,110 +1,100 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, shallowReactive, shallowRef, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { currentAdapter } from '@/composables/useStore';
-import {
-	onScanDone,
-	onScanHostResults,
-	runHostScan,
-	stopHostScan,
-} from '@/api/ipc';
-import type { ScanDoneResult, ScanHostResult } from '@/types';
+import { listScanSubnets, onScanDone, onScanHostResults, onScanRoundStarted, onScanWaiting, runHostScan, stopHostScan } from '@/api/ipc';
+import type { ScanHostResult } from '@/types';
 import { useScopedListeners } from '@/composables/useScopedListeners';
 
-type HostRow = {
-	ip: string;
-	status: 'scanning' | ScanHostResult['status'];
-	last_seen: number | null;
-	hostname: string | null;
-	mac: string | null;
+type HostRow = Omit<ScanHostResult, 'status'> & {
+	status: ScanHostResult['status'] | 'scanning' | 'unchecked';
 };
-type Filter = 'all' | HostRow['status'];
+type Filter = 'all' | ScanHostResult['status'];
 
-const adapter = computed(() => currentAdapter());
-const rows = ref<HostRow[]>([]);
+const props = defineProps<{ active: boolean }>();
+const adapter = computed(currentAdapter);
+const subnets = ref<string[]>([]);
+const selectedSubnet = ref('');
+const repeat = ref(false);
 const running = ref(false);
-const taskId = ref('');
-const scannedAdapter = ref('');
-const scannedAdapterDescription = ref('');
-const scannedIp = ref('');
-const scannedMask = ref('');
-const filter = ref<Filter>('all');
-const filterItems = [
-	['all', '全部', 'all'],
-	['online', '在线', 'online'],
-	['offline', '离线', 'offline'],
-	['undiscovered', '从未发现', 'undiscovered'],
-] as const;
-const search = ref('');
-const error = ref('');
+const waiting = ref(false);
+const stopping = ref(false);
+const scanned = ref(0);
 const ready = ref(false);
+const error = ref('');
+const rows = shallowRef<HostRow[]>([]);
+const byIp = new Map<string, HostRow>();
+const counts = reactive({ all: 0, online: 0, offline: 0, undiscovered: 0, scanning: 0, unchecked: 0 });
+const filter = ref<Filter>('all');
+const filterItems = ['all', 'online', 'offline', 'undiscovered'] as const;
+const labels = { all: '全部', online: '在线', offline: '离线', undiscovered: '从未发现', scanning: '扫描中', unchecked: '未检查' };
+const search = ref('');
+const nowSec = ref(Math.floor(Date.now() / 1000));
 const registerListener = useScopedListeners();
-const rowIndexes = new Map<string, number>();
-const pendingResults: ScanHostResult[] = [];
-let batchTimer: number | undefined;
+let taskId = '';
+let discard = false;
 const ROW_HEIGHT = 34;
 const OVERSCAN = 6;
 const hostList = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
 const listHeight = ref(0);
 
-function ipv4Number(ip: string): number | null {
-	const parts = ip.split('.').map(Number);
-	if (
-		parts.length !== 4 ||
-		parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)
-	)
-		return null;
-	return (
-		((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
-	);
+function clearRows() {
+	rows.value = [];
+	byIp.clear();
+	Object.assign(counts, { all: 0, online: 0, offline: 0, undiscovered: 0, scanning: 0, unchecked: 0 });
+	scanned.value = 0;
+	resetScroll();
 }
 
-function numberIp(value: number): string {
-	return [
-		value >>> 24,
-		(value >>> 16) & 255,
-		(value >>> 8) & 255,
-		value & 255,
-	].join('.');
-}
-
-function subnetHosts(ip: string, mask: string): string[] {
-	const addr = ipv4Number(ip);
-	const maskNum = ipv4Number(mask);
-	if (addr === null || maskNum === null) return [];
-	const inverse = ~maskNum >>> 0;
-	if ((inverse & ((inverse + 1) >>> 0)) >>> 0 !== 0) return [];
-	const prefix = maskNum.toString(2).replace(/0/g, '').length;
-	const network = (addr & maskNum) >>> 0;
-	const broadcast = (network | inverse) >>> 0;
-	const start = prefix <= 30 ? network + 1 : network;
-	const end = prefix <= 30 ? broadcast - 1 : broadcast;
-	const result: string[] = [];
-	for (let n = start; n <= end && result.length <= 4096; n++) {
-		if (n !== addr) result.push(numberIp(n >>> 0));
-	}
-	return result;
+function beginRound(ips: string[]) {
+	scanned.value = 0;
+	waiting.value = false;
+	// Keep the previous observations visible during automatic refreshes.
+	if (ips.length === rows.value.length && ips.every(ip => byIp.has(ip))) return;
+	clearRows();
+	rows.value = ips.map(ip => {
+		const row = shallowReactive<HostRow>({ ip, status: 'scanning', hostname: null, mac: null, last_seen: null });
+		byIp.set(ip, row);
+		return row;
+	});
+	counts.all = counts.scanning = ips.length;
 }
 
 onMounted(async () => {
+	window.addEventListener('pagehide', stopScan);
 	try {
 		await Promise.all([
-			registerListener(onScanHostResults((results) => {
-				if (results[0]?.task_id !== taskId.value) return;
-				pendingResults.push(...results);
-				if (pendingResults.length >= 128) flushResults();
-				else batchTimer ??= window.setTimeout(flushResults, 80);
+			registerListener(onScanRoundStarted(p => {
+				if (p.task_id === taskId && !discard) beginRound(p.ips);
 			})),
-			registerListener(onScanDone((result: ScanDoneResult) => {
-				if (result.task_id !== taskId.value) return;
-				flushResults();
-				running.value = false;
-				if (result.error)
-					error.value = `扫描完成，但历史记录保存失败：${result.error}`;
-				else if (result.cancelled)
-					ElMessage.info(`扫描已停止，已检查 ${result.scanned} 个地址`);
-				else ElMessage.success(`扫描完成，共检查 ${result.scanned} 个地址`);
+			registerListener(onScanHostResults(p => {
+				if (p.task_id !== taskId || discard) return;
+				scanned.value = p.scanned;
+				for (const result of p.rows) {
+					const row = byIp.get(result.ip);
+					if (!row) continue;
+					if (row.status !== result.status) {
+						counts[row.status]--;
+						counts[result.status]++;
+					}
+					Object.assign(row, result);
+				}
+			})),
+			registerListener(onScanWaiting(id => {
+				if (id === taskId && !discard) waiting.value = true;
+			})),
+			registerListener(onScanDone(p => {
+				if (p.task_id !== taskId) return;
+				taskId = '';
+				running.value = waiting.value = stopping.value = false;
+				if (discard) return;
+				for (const row of rows.value) {
+					if (row.status === 'scanning') { row.status = 'unchecked'; counts.unchecked++; }
+				}
+				counts.scanning = 0;
+				if (p.error) error.value = p.error;
+				else if (!p.cancelled) ElMessage.success(`扫描完成，共检查 ${p.scanned} 个地址`);
 			})),
 		]);
 		ready.value = true;
@@ -113,76 +103,68 @@ onMounted(async () => {
 	}
 });
 
+async function stopScan() {
+	if (!taskId || stopping.value) return;
+	stopping.value = true;
+	try { await stopHostScan(taskId); }
+	catch (cause) { error.value = String(cause); stopping.value = false; }
+}
+
 onUnmounted(() => {
-	window.clearTimeout(batchTimer);
-	if (running.value) void stopHostScan(taskId.value).catch(() => undefined);
+	window.removeEventListener('pagehide', stopScan);
+	void stopScan();
 });
 
-function flushResults() {
-	window.clearTimeout(batchTimer);
-	batchTimer = undefined;
-	for (const result of pendingResults.splice(0)) {
-		const index = rowIndexes.get(result.ip);
-		if (index === undefined) continue;
-		const row = rows.value[index];
-		row.status = result.status;
-		row.last_seen = result.last_seen;
-		row.hostname = result.hostname;
-		row.mac = result.mac;
-	}
-}
+// Refresh the offered prefixes when the selected adapter or its address configuration changes.
+watch(() => [adapter.value?.if_index, adapter.value?.name, adapter.value?.status,
+	adapter.value?.ipv4.join(','), adapter.value?.subnet_mask.join(',')].join('|'),
+	async (_key, _old, onCleanup) => {
+		let stale = false;
+		onCleanup(() => { stale = true; });
+		discard = true;
+		void stopScan();
+		clearRows();
+		subnets.value = [];
+		selectedSubnet.value = '';
+		error.value = '';
+		const nic = adapter.value;
+		if (!nic?.if_index || nic.status !== 'connected') return;
+		try {
+			const list = await listScanSubnets(nic.name, nic.if_index);
+			if (!stale) {
+				subnets.value = list;
+				if (list.length) selectedSubnet.value = 'all';
+			}
+		} catch (cause) { if (!stale) error.value = String(cause); }
+	}, { immediate: true });
+
+watch(selectedSubnet, () => { clearRows(); error.value = ''; });
+watch(() => props.active, active => { if (!active && repeat.value) void stopScan(); });
+watch(() => props.active && rows.value.length > 0, (visible, _, onCleanup) => {
+	if (!visible) return;
+	const tick = () => { nowSec.value = Math.floor(Date.now() / 1000); };
+	tick();
+	const timer = window.setInterval(tick, 1000);
+	onCleanup(() => window.clearInterval(timer));
+}, { immediate: true });
 
 async function startScan() {
-	if (!ready.value || running.value) return;
-	const a = adapter.value;
-	if (!a) return;
-	const ip = a.ipv4.find((x) => ipv4Number(x) !== null);
-	const mask = a.subnet_mask.find((x) => ipv4Number(x) !== null);
-	if (!ip || !mask) {
-		ElMessage.warning('当前网卡没有可用的 IPv4 地址和子网掩码');
-		return;
-	}
-	const hosts = subnetHosts(ip, mask);
-	if (!hosts.length || hosts.length > 4096) {
-		ElMessage.warning('无法计算扫描范围，或网段超过 4096 个地址');
-		return;
-	}
-	taskId.value = `scan-${Date.now()}`;
-	scannedAdapter.value = a.name;
-	scannedAdapterDescription.value = a.description;
-	scannedIp.value = ip;
-	scannedMask.value = mask;
-	rowIndexes.clear();
-	hosts.forEach((host, index) => rowIndexes.set(host, index));
-	rows.value = hosts.map((host) => ({
-		ip: host,
-		status: 'scanning',
-		last_seen: null,
-		hostname: null,
-		mac: null,
-	}));
-	error.value = '';
+	const nic = adapter.value;
+	if (!ready.value || running.value || !nic?.if_index || !subnets.value.length) return;
+	clearRows();
 	filter.value = 'all';
-	resetScroll();
+	error.value = '';
+	discard = false;
 	running.value = true;
 	try {
-		await runHostScan(taskId.value, a.name, ip, mask);
-	} catch (e) {
-		running.value = false;
-		error.value = typeof e === 'string' ? e : String(e);
+		taskId = crypto.randomUUID();
+		await runHostScan(taskId, nic.name, nic.if_index, selectedSubnet.value === 'all' ? null : selectedSubnet.value, repeat.value);
+	} catch (cause) {
+		taskId = '';
+		running.value = stopping.value = false;
+		if (!discard) error.value = String(cause);
 	}
 }
-
-async function stopScan() {
-	if (!running.value) return;
-	await stopHostScan(taskId.value);
-}
-
-const counts = computed(() => {
-	const total = { all: rows.value.length, online: 0, offline: 0, undiscovered: 0, scanning: 0 };
-	for (const row of rows.value) total[row.status]++;
-	return total;
-});
 
 const visibleRows = computed(() => {
 	const kw = search.value.trim();
@@ -218,18 +200,14 @@ watch(hostList, (list, _previous, onCleanup) => {
 	onCleanup(() => observer.disconnect());
 }, { flush: 'post' });
 
-function statusLabel(status: HostRow['status']): string {
-	return status === 'online'
-		? '在线'
-		: status === 'offline'
-			? '离线（曾在线）'
-			: status === 'undiscovered'
-				? '从未发现'
-				: '扫描中';
-}
-
 function formatSeen(value: number | null): string {
-	return value ? new Date(value * 1000).toLocaleString() : '—';
+	if (!value) return '—';
+	const elapsed = Math.max(0, nowSec.value - value);
+	if (elapsed < 5) return '刚刚';
+	if (elapsed < 60) return `${elapsed} 秒前`;
+	if (elapsed < 3600) return `${Math.floor(elapsed / 60)} 分钟前`;
+	if (elapsed < 86400) return `${Math.floor(elapsed / 3600)} 小时前`;
+	return `${Math.floor(elapsed / 86400)} 天前`;
 }
 </script>
 
@@ -239,77 +217,52 @@ function formatSeen(value: number | null): string {
 			<div class="scan-heading">
 				<div>
 					<div class="scan-title">主机扫描</div>
-					<div
-						class="current-adapter-info"
-						:title="
-							rows.length
-								? scannedAdapterDescription
-								: adapter?.description || ''
-						">
+					<div class="current-adapter-info" :title="adapter?.description">
 						<span class="adapter-info-label">当前网卡</span>
-						<strong class="adapter-info-name">{{
-							rows.length
-								? scannedAdapter
-								: adapter?.name || '未选择'
-						}}</strong>
-						<span
-							v-if="
-								rows.length
-									? scannedAdapterDescription
-									: adapter?.description
-							"
-							class="adapter-info-description"
-							>({{
-								rows.length
-									? scannedAdapterDescription
-									: adapter?.description
-							}})</span>
-						<span v-if="rows.length || adapter?.ipv4?.[0]" class="adapter-info-network">
-							{{ rows.length ? scannedIp : adapter?.ipv4[0] }} /
-							{{
-								rows.length
-									? scannedMask
-									: adapter?.subnet_mask[0] || '未知掩码'
-							}}
-						</span>
+						<strong class="adapter-info-name">{{ adapter?.name || '未选择' }}</strong>
+						<span v-if="adapter?.description" class="adapter-info-description">({{ adapter.description }})</span>
 					</div>
 				</div>
 				<div class="scan-actions">
 					<el-button
 						type="primary"
-						:disabled="!adapter || !ready"
+						:disabled="!subnets.length || !ready"
 						:loading="running"
 						@click="startScan">
 						{{
 							running
-								? '扫描中…'
+								? (waiting ? '等待复扫' : '扫描中…')
 								: rows.length
 									? '重新扫描'
 									: '开始扫描'
 						}}
 					</el-button>
-					<el-button v-if="running" @click="stopScan">停止</el-button>
+					<el-button v-if="running" :disabled="stopping" @click="stopScan">{{ stopping ? '停止中…' : '停止' }}</el-button>
 				</div>
 			</div>
-			<div class="scan-note muted">
-				通过当前网卡发送 IPv4
-				探测。无响应不代表设备确定不存在；“离线”表示此前扫描中曾响应，“从未发现”表示本工具尚未记录到它在线。
+			<div class="scan-options">
+				<el-select v-model="selectedSubnet" aria-label="扫描网段" size="small"
+					:disabled="running || !subnets.length" :placeholder="subnets.length ? '全部网段' : '无可用 IPv4 网段'">
+					<el-option label="全部网段" value="all" />
+					<el-option v-for="subnet in subnets" :key="subnet" :label="subnet" :value="subnet" />
+				</el-select>
+				<label><input type="checkbox" v-model="repeat" :disabled="running" /> 自动复扫（每轮结束后 30 秒）</label>
 			</div>
 			<div v-if="rows.length" class="scan-summary">
 				<button
 					v-for="item in filterItems"
-					:key="item[0]"
+					:key="item"
 					class="summary-chip"
 					:class="[
-						`state-${item[0]}`,
-						{ active: filter === item[0] },
+						`state-${item}`,
+						{ active: filter === item },
 					]"
-					@click="filter = item[0]">
-					<span>{{ item[1] }}</span
-					><b>{{ counts[item[2]] }}</b>
+					@click="filter = item">
+					<span>{{ labels[item] }}</span
+					><b>{{ counts[item] }}</b>
 				</button>
 				<span v-if="running" class="muted scan-progress"
-					>已返回 {{ rows.length - counts.scanning }} /
+					>已检查 {{ scanned }} /
 					{{ rows.length }} 个地址</span
 				>
 			</div>
@@ -331,7 +284,7 @@ function formatSeen(value: number | null): string {
 					class="scan-search" />
 			</div>
 			<div v-if="!rows.length" class="scan-empty muted">
-				点击“开始扫描”，探测当前选中网卡所在子网的可用 IPv4 地址。
+				选择网段后点击“开始扫描”，查看该范围内发现的设备。
 			</div>
 			<div v-else-if="!visibleRows.length" class="scan-empty muted">
 				没有符合条件的地址。
@@ -360,17 +313,9 @@ function formatSeen(value: number | null): string {
 						row.mac || '—'
 					}}</code>
 					<span class="host-status" :class="`text-${row.status}`">{{
-						statusLabel(row.status)
+						labels[row.status]
 					}}</span>
-					<span class="host-seen muted">{{
-						row.status === 'scanning'
-							? '正在探测…'
-							: row.status === 'online'
-								? '刚刚'
-								: row.status === 'offline'
-									? formatSeen(row.last_seen)
-									: '—'
-					}}</span>
+					<span class="host-seen muted">{{ formatSeen(row.last_seen) }}</span>
 				</div>
 				<div aria-hidden="true" :style="{ height: (visibleRows.length - lastVisibleRow) * ROW_HEIGHT + 'px' }"></div>
 			</div>
@@ -431,13 +376,18 @@ function formatSeen(value: number | null): string {
 	font-size: 16px;
 	font-weight: 700;
 }
-.scan-note {
-	font-size: 12px;
-	margin-top: 4px;
+.scan-options, .scan-options label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 }
-.scan-note {
-	line-height: 1.5;
-	margin-top: 0;
+.scan-options {
+	flex-wrap: wrap;
+	color: var(--text-secondary);
+	font-size: 12px;
+}
+.scan-options .el-select {
+	width: 180px;
 }
 .current-adapter-info {
 	display: flex;
@@ -464,12 +414,6 @@ function formatSeen(value: number | null): string {
 }
 .adapter-info-description {
 	color: var(--text-secondary);
-}
-.adapter-info-network {
-	padding-left: 8px;
-	border-left: 1px solid var(--panel-border);
-	color: var(--accent);
-	font-variant-numeric: tabular-nums;
 }
 .scan-summary {
 	display: flex;

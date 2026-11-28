@@ -329,7 +329,7 @@ onUnmounted(() => {
 	flex: none;
 	align-items: center;
 	gap: 5px;
-	color: var(--success);
+	color: var(--state-live);
 	font-size: 10px;
 }
 .monitor-state i {

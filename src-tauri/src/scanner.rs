@@ -1,275 +1,355 @@
 use crate::config::{load_host_history, update_host_history};
-use crate::encoding::decode_bytes;
-use crate::process::suppress_window;
 use crate::types::HostHistory;
-use std::collections::{HashMap, VecDeque};
+use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::net::Ipv4Addr;
-use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
-static SCANS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
-
-fn scans() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
-    SCANS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn ip_num(ip: Ipv4Addr) -> u32 {
-    u32::from(ip)
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
-fn hosts_for_subnet(ip: &str, mask: &str) -> Result<(Vec<String>, String), String> {
-    let ip: Ipv4Addr = ip.parse().map_err(|_| "所选网卡的 IPv4 地址无效".to_string())?;
-    let mask: Ipv4Addr = mask.parse().map_err(|_| "所选网卡的子网掩码无效".to_string())?;
-    let mask_n = ip_num(mask);
-    let inverse = !mask_n;
-    if inverse & inverse.wrapping_add(1) != 0 {
-        return Err("子网掩码不是连续掩码，无法计算扫描范围".to_string());
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows as native;
+#[cfg(not(windows))]
+mod native {
+    use super::*;
+    pub(super) fn bindings(_: &str, _: u32) -> Result<Vec<Binding>, String> {
+        Err("主机扫描仅支持 Windows".into())
     }
-
-    let prefix = mask_n.count_ones();
-    let network_n = ip_num(ip) & mask_n;
-    let broadcast_n = network_n | inverse;
-    let start = if prefix <= 30 { network_n + 1 } else { network_n };
-    let end = if prefix <= 30 { broadcast_n.saturating_sub(1) } else { broadcast_n };
-    let count = if end >= start { end - start + 1 } else { 0 };
-    if count > 4096 {
-        return Err(format!(
-            "该网段有 {count} 个可扫描地址，单次扫描上限为 4096。请改用更小的子网掩码范围。"
-        ));
-    }
-
-    let hosts = (start..=end)
-        .filter(|&n| n != ip_num(ip))
-        .map(|n| Ipv4Addr::from(n).to_string())
-        .collect();
-    let network = format!("{}/{}", Ipv4Addr::from(network_n), prefix);
-    Ok((hosts, network))
+    pub(super) fn probe(_: Binding, _: Ipv4Addr) -> (bool, Option<String>) { (false, None) }
+    pub(super) fn neighbors(_: u32) -> HashSet<Ipv4Addr> { HashSet::new() }
+    pub(super) fn hostname(_: Ipv4Addr) -> Option<String> { None }
 }
 
-fn ping(ip: &str, source: &str) -> (bool, Option<String>) {
-    let mut cmd = Command::new("ping");
-    cmd.args(["-4", "-a", "-n", "1", "-w", "500", "-S", source, ip]);
-    suppress_window(&mut cmd);
-    match cmd.output() {
-        Ok(out) if out.status.success() => {
-            let text = decode_bytes(&out.stdout);
-            let online = text.contains("TTL=") || text.contains("ttl=");
-            (online, parse_ping_hostname(&text, ip))
-        }
-        _ => (false, None),
-    }
+const LIMIT: usize = 4096;
+const PROBE_WORKERS: usize = 32;
+const BATCH_DELAY: Duration = Duration::from_millis(60);
+const REPEAT_DELAY: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy)]
+struct Binding {
+    ip: Ipv4Addr,
+    prefix: u8,
+    ethernet: bool,
 }
 
-fn parse_ping_hostname(text: &str, ip: &str) -> Option<String> {
-    let marker = format!("[{ip}]");
-    for line in text.lines() {
-        let Some(index) = line.find(&marker) else { continue };
-        let before = line[..index].trim();
-        let name = before
-            .strip_prefix("Pinging ")
-            .or_else(|| before.strip_prefix("正在 Ping "))
-            .unwrap_or(before)
-            .trim();
-        if !name.is_empty() && name != ip {
-            return Some(name.to_string());
-        }
+impl Binding {
+    fn range(self) -> (u32, u32) {
+        let host_bits = u32::MAX.checked_shr(self.prefix as u32).unwrap_or(0);
+        let base = u32::from(self.ip) & !host_bits;
+        (base, base | host_bits)
     }
-    None
-}
-
-fn parse_mac(text: &str, ip: &str) -> Option<String> {
-    for line in text.lines() {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.first().copied() != Some(ip) || fields.len() < 2 {
-            continue;
-        }
-        let mac = fields[1].replace(':', "-").to_uppercase();
-        let octets: Vec<&str> = mac.split('-').collect();
-        if octets.len() == 6
-            && octets
-                .iter()
-                .all(|part| part.len() == 2 && part.chars().all(|c| c.is_ascii_hexdigit()))
-        {
-            return Some(mac);
-        }
+    fn cidr(self) -> String {
+        format!("{}/{}", Ipv4Addr::from(self.range().0), self.prefix)
     }
-    None
-}
-
-fn lookup_mac(ip: &str) -> Option<String> {
-    let mut cmd = Command::new("arp");
-    cmd.args(["-a", ip]);
-    suppress_window(&mut cmd);
-    let output = cmd.output().ok()?;
-    if !output.status.success() {
-        return None;
+    fn local_slice(self) -> Option<Self> {
+        (self.prefix < 20).then_some(Self { prefix: 24, ..self })
     }
-    parse_mac(&decode_bytes(&output.stdout), ip)
 }
 
 #[tauri::command]
-pub async fn run_host_scan(
-    app: AppHandle,
-    task_id: String,
-    adapter: String,
-    ip: String,
-    mask: String,
-) -> Result<(), String> {
-    let (hosts, network) = hosts_for_subnet(&ip, &mask)?;
-    if hosts.is_empty() {
-        return Err("该网段没有可扫描的其他主机地址".to_string());
-    }
-    let previous: HashMap<String, HostHistory> = load_host_history(&app)
-        .map_err(|e| format!("读取扫描历史失败：{e}"))?
-        .into_iter()
-        .filter(|h| h.adapter == adapter && h.network == network)
-        .map(|h| (h.ip.clone(), h))
-        .collect();
-    let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut active = scans().lock().map_err(|_| "扫描状态不可用".to_string())?;
-        if active.contains_key(&task_id) {
-            return Err("该扫描任务已在运行".to_string());
+pub async fn list_scan_subnets(adapter: String, if_index: u32) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bindings = native::bindings(&adapter, if_index)?;
+        let mut choices = BTreeSet::new();
+        for binding in bindings {
+            choices.insert(binding.cidr());
+            if let Some(slice) = binding.local_slice() {
+                choices.insert(slice.cidr());
+            }
         }
-        active.insert(task_id.clone(), cancel.clone());
+        Ok(choices.into_iter().collect())
+    }).await.map_err(|e| e.to_string())?
+}
+
+struct Target {
+    ip: Ipv4Addr,
+    source: Binding,
+    network: Arc<str>,
+}
+
+fn targets(mut bindings: Vec<Binding>, filter: Option<&str>) -> Result<Vec<Target>, String> {
+    let local: HashSet<_> = bindings.iter().map(|b| b.ip).collect();
+    // Overlapping networks use the most specific source. Alias addresses are never scanned.
+    bindings.sort_by_key(|b| (std::cmp::Reverse(b.prefix), b.ip));
+    let mut networks = HashSet::new();
+    let mut targets = BTreeMap::new();
+    for source in bindings {
+        let network: Arc<str> = source.cidr().into();
+        let range = match filter {
+            Some(f) if f != network.as_ref() => match source.local_slice() {
+                Some(slice) if slice.cidr() == f => slice,
+                _ => continue,
+            },
+            _ => source,
+        };
+        if !networks.insert(range.cidr()) {
+            continue;
+        }
+        let (base, broadcast) = range.range();
+        let skip = u32::from(range.prefix < 31);
+        let start = base + skip;
+        let end = broadcast - skip;
+        if u64::from(end) - u64::from(start) + 1 > LIMIT as u64 + local.len() as u64 {
+            return Err(format!("网段 {network} 超过单轮 {LIMIT} 个地址的上限，可在网段列表选择本机所在的 /24 范围"));
+        }
+        for ip in (start..=end).map(Ipv4Addr::from).filter(|v| !local.contains(v)) {
+            targets.entry(ip).or_insert_with(|| Target {
+                ip,
+                source,
+                network: network.clone(),
+            });
+            if targets.len() > LIMIT {
+                return Err(format!("所选网段合计超过 {LIMIT} 个地址，请指定单个网段"));
+            }
+        }
+    }
+    if targets.is_empty() {
+        return Err("所选网段已变化或没有其他可扫描地址".into());
+    }
+    Ok(targets.into_values().collect())
+}
+
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+struct Session {
+    id: String,
+    stop: Arc<AtomicBool>,
+    wake: mpsc::Sender<()>,
+}
+static ACTIVE: Mutex<Option<Session>> = Mutex::new(None);
+
+#[derive(Clone, Serialize)]
+struct HostRow {
+    ip: Ipv4Addr,
+    status: &'static str,
+    last_seen: Option<u64>,
+    hostname: Option<String>,
+    mac: Option<String>,
+}
+
+enum Update {
+    Probe(usize, bool, Option<String>),
+    Name(usize, Option<String>),
+}
+
+// A slow system resolver cannot consume probe workers or accumulate threads on successive scans.
+struct NameJob {
+    index: usize,
+    ip: Ipv4Addr,
+    active: Arc<AtomicBool>,
+    tx: mpsc::Sender<Update>,
+}
+fn name_queue() -> &'static mpsc::SyncSender<NameJob> {
+    static QUEUE: OnceLock<mpsc::SyncSender<NameJob>> = OnceLock::new();
+    QUEUE.get_or_init(|| {
+        let (tx, rx) = mpsc::sync_channel::<NameJob>(128);
+        let rx = Arc::new(Mutex::new(rx));
+        for _ in 0..4 {
+            let rx = rx.clone();
+            let _ = std::thread::Builder::new().name("scan-hostname".into()).spawn(move || loop {
+                let job = rx.lock().unwrap().recv();
+                let Ok(job) = job else { return };
+                if job.active.load(Ordering::Relaxed) {
+                    let _ = job.tx.send(Update::Name(job.index, native::hostname(job.ip)));
+                }
+            });
+        }
+        tx
+    })
+}
+
+struct Scan {
+    app: AppHandle,
+    id: String,
+    adapter: String,
+    if_index: u32,
+    stop: Arc<AtomicBool>,
+    scanned: usize,
+}
+
+impl Scan {
+    fn flush(&self, batch: &mut Vec<HostRow>) {
+        if batch.is_empty() {
+            return;
+        }
+        let _ = self.app.emit_to("main", "scan-host-results", serde_json::json!({
+            "task_id": self.id, "scanned": self.scanned, "rows": batch
+        }));
+        batch.clear();
     }
 
-    std::thread::spawn(move || {
-        let queue = Arc::new(Mutex::new(VecDeque::from(hosts)));
-        let workers = 16usize.min(queue.lock().map(|q| q.len()).unwrap_or(0)).max(1);
-        let (tx, rx) = std::sync::mpsc::channel::<(String, bool, Option<String>, Option<String>)>();
-        let mut joins = Vec::with_capacity(workers);
+    fn round(&mut self, targets: &mut [Target], confirmed: &mut HashSet<(Arc<str>, Ipv4Addr)>) -> Result<(), String> {
+        let history: HashMap<_, _> = load_host_history(&self.app)?.into_iter()
+            .filter(|h| h.adapter == self.adapter)
+            .filter_map(|h| {
+                let ip = h.ip.parse::<Ipv4Addr>().ok()?;
+                Some(((Arc::<str>::from(h.network.as_str()), ip), h))
+            })
+            .collect();
+        let ips: Vec<_> = targets.iter().map(|t| t.ip).collect();
+        self.app.emit_to("main", "scan-round-started", serde_json::json!({
+            "task_id": self.id, "ips": ips
+        })).map_err(|e| e.to_string())?;
+        let neighbors = native::neighbors(self.if_index);
+        targets.sort_by_cached_key(|t| {
+            if neighbors.contains(&t.ip) { 0 }
+            else if history.contains_key(&(t.network.clone(), t.ip)) { 1 }
+            else { 2 }
+        });
+        let targets: &[Target] = targets;
 
-        for _ in 0..workers {
-            let q = queue.clone();
-            let tx = tx.clone();
-            let stop = cancel.clone();
-            let source = ip.clone();
-            joins.push(std::thread::spawn(move || loop {
-                if stop.load(Ordering::Relaxed) {
+        let mut online = HashMap::<usize, HostRow>::new();
+        let mut batch = Vec::new();
+        let name_active = Arc::new(AtomicBool::new(true));
+        self.scanned = 0;
+        let next = AtomicUsize::new(0);
+        let (tx, rx) = mpsc::channel();
+        std::thread::scope(|scope| -> Result<(), String> {
+            for worker in 0..PROBE_WORKERS.min(targets.len()) {
+                let tx = tx.clone();
+                let next = &next;
+                let stop = &self.stop;
+                let started = std::thread::Builder::new().name("scan-probe".into()).spawn_scoped(scope, move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(t) = targets.get(i) else { break };
+                        let (up, mac) = native::probe(t.source, t.ip);
+                        if tx.send(Update::Probe(i, up, mac)).is_err() {
+                            break;
+                        }
+                    }
+                });
+                if let Err(error) = started {
+                    if worker == 0 {
+                        return Err(format!("无法启动扫描线程：{error}"));
+                    }
                     break;
                 }
-                let next = q.lock().ok().and_then(|mut q| q.pop_front());
-                let Some(host) = next else { break };
-                let (responsive, hostname) = ping(&host, &source);
-                let mac = if responsive { lookup_mac(&host) } else { None };
-                let _ = tx.send((host, responsive, hostname, mac));
-            }));
-        }
-        drop(tx);
-
-        let mut scanned = 0usize;
-        let mut online = Vec::new();
-        let mut batch = Vec::with_capacity(32);
-        let mut last_sent = Instant::now();
-        for (host, responsive, hostname, mac) in rx {
-            scanned += 1;
-            let previous_host = previous.get(&host);
-            let last_seen = if responsive { Some(now()) } else { previous_host.map(|h| h.last_seen) };
-            let hostname = hostname.or_else(|| previous_host.and_then(|h| h.hostname.clone()));
-            let mac = mac.or_else(|| previous_host.and_then(|h| h.mac.clone()));
-            if responsive {
-                online.push((
-                    host.clone(),
-                    last_seen.unwrap_or_else(now),
-                    hostname.clone(),
-                    mac.clone(),
-                ));
             }
-            let status = if responsive {
-                "online"
-            } else if previous_host.is_some() {
-                "offline"
-            } else {
-                "undiscovered"
-            };
-            batch.push(serde_json::json!({
-                    "task_id": task_id.clone(),
-                    "ip": host,
-                    "status": status,
-                    "last_seen": last_seen,
-                    "hostname": hostname,
-                    "mac": mac,
-            }));
-            if batch.len() >= 32 || last_sent.elapsed() >= Duration::from_millis(60) {
-                let _ = app.emit_to("main", "scan-host-results", &batch);
-                batch.clear();
-                last_sent = Instant::now();
-            }
-        }
-        if !batch.is_empty() {
-            let _ = app.emit_to("main", "scan-host-results", &batch);
-        }
-        for join in joins {
-            let _ = join.join();
-        }
-
-        let timestamp = now();
-        let error = if online.is_empty() {
-            None
-        } else {
-            update_host_history(&app, |history| {
-                let mut indexes: HashMap<String, usize> = history.iter().enumerate()
-                    .filter(|(_, h)| h.adapter == adapter && h.network == network)
-                    .map(|(index, h)| (h.ip.clone(), index))
-                    .collect();
-                for (host, seen_at, hostname, mac) in online {
-                    if let Some(&index) = indexes.get(&host) {
-                        let existing = &mut history[index];
-                        if seen_at >= existing.last_seen {
-                            existing.last_seen = seen_at;
-                            existing.hostname = hostname;
-                            existing.mac = mac;
+            let mut queued_names = 0usize;
+            let mut dns_deadline = None;
+            let mut flush_at = Instant::now() + BATCH_DELAY;
+            while !self.stop.load(Ordering::Relaxed) {
+                let wait = flush_at.saturating_duration_since(Instant::now());
+                match rx.recv_timeout(wait) {
+                    Ok(Update::Probe(i, up, mac)) => {
+                        self.scanned += 1;
+                        let t = &targets[i];
+                        let key = (t.network.clone(), t.ip);
+                        let old = history.get(&key);
+                        let same_device = old.filter(|h| mac.is_none() || h.mac.is_none() || h.mac == mac);
+                        let row = HostRow {
+                            ip: t.ip,
+                            status: if up || confirmed.contains(&key) {
+                                "online"
+                            } else if old.is_some() {
+                                "offline"
+                            } else {
+                                "undiscovered"
+                            },
+                            last_seen: if up { Some(now()) } else { old.map(|h| h.last_seen) },
+                            hostname: same_device.and_then(|h| h.hostname.clone()),
+                            mac: mac.or_else(|| old.and_then(|h| h.mac.clone())),
+                        };
+                        if up {
+                            if row.hostname.is_none() && name_queue().try_send(NameJob {
+                                index: i, ip: t.ip, active: name_active.clone(), tx: tx.clone()
+                            }).is_ok() {
+                                queued_names += 1;
+                            }
+                            online.insert(i, row.clone());
                         }
-                    } else {
-                        indexes.insert(host.clone(), history.len());
-                        history.push(HostHistory {
-                            adapter: adapter.clone(),
-                            network: network.clone(),
-                            ip: host,
-                            last_seen: seen_at,
-                            hostname,
-                            mac,
-                        });
+                        batch.push(row);
+                        if self.scanned == targets.len() {
+                            dns_deadline = Some(Instant::now() + Duration::from_secs(2));
+                        }
                     }
+                    Ok(Update::Name(i, name)) => {
+                        queued_names -= 1;
+                        if let (Some(row), Some(name)) = (online.get_mut(&i), name) {
+                            row.hostname = Some(name);
+                            batch.push(row.clone());
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
-            }).err()
-        };
-        let cancelled = cancel.load(Ordering::Relaxed);
-        if let Ok(mut active) = scans().lock() {
-            active.remove(&task_id);
-        }
-        let _ = app.emit_to(
-            "main",
-            "scan-done",
-            serde_json::json!({
-                "task_id": task_id.clone(),
-                "scanned": scanned,
-                "cancelled": cancelled,
-                "error": error,
-                "completed_at": timestamp,
-            }),
-        );
+                let finished = dns_deadline.is_some_and(|d| queued_names == 0 || Instant::now() >= d);
+                if batch.len() >= 32 || Instant::now() >= flush_at || finished {
+                    self.flush(&mut batch);
+                    flush_at = Instant::now() + BATCH_DELAY;
+                }
+                if finished { break; }
+            }
+            name_active.store(false, Ordering::Relaxed);
+            Ok(())
+        })?;
+        self.flush(&mut batch);
+        *confirmed = online.keys().map(|&i| (targets[i].network.clone(), targets[i].ip)).collect();
+        if online.is_empty() { return Ok(()); }
+        update_host_history(&self.app, |history| {
+            let mut incoming: HashMap<_, _> = online.into_iter().map(|(i, row)| {
+                let record = HostHistory {
+                    adapter: self.adapter.clone(),
+                    network: targets[i].network.to_string(),
+                    ip: row.ip.to_string(),
+                    last_seen: row.last_seen.unwrap(),
+                    hostname: row.hostname,
+                    mac: row.mac,
+                };
+                ((record.network.clone(), record.ip.clone()), record)
+            }).collect();
+            for h in history.iter_mut().filter(|h| h.adapter == self.adapter) {
+                if let Some(new) = incoming.remove(&(h.network.clone(), h.ip.clone())) { *h = new; }
+            }
+            history.extend(incoming.into_values());
+        })
+    }
+}
+
+#[tauri::command]
+pub fn run_host_scan(app: AppHandle, task_id: String, adapter: String, if_index: u32,
+    subnet: Option<String>, repeat: bool) -> Result<(), String> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (wake, wait) = mpsc::channel();
+    {
+        let mut active = ACTIVE.lock().map_err(|_| "扫描状态不可用")?;
+        if active.is_some() { return Err("上一次扫描仍在运行，请稍后重试".into()); }
+        *active = Some(Session { id: task_id.clone(), stop: stop.clone(), wake });
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut scan = Scan { app, id: task_id, adapter, if_index, stop, scanned: 0 };
+        let mut confirmed = HashSet::new();
+        let result: Result<(), String> = (|| {
+            while !scan.stop.load(Ordering::Relaxed) {
+                let mut plan = targets(native::bindings(&scan.adapter, if_index)?, subnet.as_deref())?;
+                scan.round(&mut plan, &mut confirmed)?;
+                if !repeat || scan.stop.load(Ordering::Relaxed) { break; }
+                let _ = scan.app.emit_to("main", "scan-waiting", &scan.id);
+                if wait.recv_timeout(REPEAT_DELAY).is_ok() { break; }
+            }
+            Ok(())
+        })();
+        if let Ok(mut active) = ACTIVE.lock() { active.take(); }
+        let _ = scan.app.emit_to("main", "scan-done", serde_json::json!({
+            "task_id": scan.id, "scanned": scan.scanned, "cancelled": scan.stop.load(Ordering::Relaxed),
+            "error": result.err()
+        }));
     });
     Ok(())
 }
 
 #[tauri::command]
 pub fn stop_host_scan(task_id: String) -> Result<(), String> {
-    if let Ok(active) = scans().lock() {
-        if let Some(cancel) = active.get(&task_id) {
-            cancel.store(true, Ordering::Relaxed);
-        }
+    let active = ACTIVE.lock().map_err(|_| "扫描状态不可用")?;
+    if let Some(s) = active.as_ref().filter(|s| s.id == task_id) {
+        s.stop.store(true, Ordering::Relaxed);
+        let _ = s.wake.send(());
     }
     Ok(())
 }

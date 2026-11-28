@@ -20,7 +20,6 @@ import {
 	onConfigChanged,
 	getAutostart,
 	setAutostart,
-	createDesktopShortcut,
 	emitConfigChanged,
 	openDevTools,
 	checkUpdate,
@@ -45,7 +44,6 @@ import {
 	Setting,
 	Sunny,
 	Moon,
-	Link,
 	Refresh,
 	Key,
 	Monitor,
@@ -78,7 +76,6 @@ const widgetVisible = ref(true);
 const trafficMonitorEnabled = ref(true);
 const savedTrafficMonitorEnabled = ref<boolean>();
 const autostart = ref(true);
-const shortcutBusy = ref(false);
 const updateVisible = ref(false);
 const updateInfo = ref<UpdateInfo | null>(null);
 const updateAvailable = ref(false);
@@ -481,19 +478,6 @@ async function saveDefaultAdapter() {
 	}
 }
 
-async function onCreateShortcut() {
-	if (shortcutBusy.value) return;
-	shortcutBusy.value = true;
-	try {
-		await createDesktopShortcut();
-		ElMessage.success('已在桌面创建快捷方式');
-	} catch (e) {
-		ElMessage.error(typeof e === 'string' ? e : '创建桌面快捷方式失败');
-	} finally {
-		shortcutBusy.value = false;
-	}
-}
-
 /// 启动时若非管理员，询问是否以管理员身份重启；提权拉起的实例不再重复弹
 async function promptAdminIfNeeded() {
 	let need = false;
@@ -683,7 +667,7 @@ function openUpdateDialog() {
 						<AdapterDetail />
 					</el-tab-pane>
 					<el-tab-pane label="主机扫描" name="scan" lazy>
-						<NetworkScan />
+						<NetworkScan :active="activeTab === 'scan' && monitoringActive" />
 					</el-tab-pane>
 					<el-tab-pane label="网络诊断" name="diag" lazy>
 						<Diagnostics />
@@ -742,7 +726,7 @@ function openUpdateDialog() {
 							text
 							aria-haspopup="dialog"
 							:aria-expanded="supportPopoverVisible"
-							@click.stop="toggleSupportPopover">☕ 支持作者</el-button>
+							@click.stop="toggleSupportPopover">🔋 支持作者</el-button>
 					</el-tooltip>
 					<el-button
 						class="settings-close"
@@ -781,29 +765,29 @@ function openUpdateDialog() {
 					<div class="settings-section-heading">
 						<span class="settings-section-title">常规</span>
 					</div>
-					<div class="settings-close-card">
-						<span class="settings-close-label">点击关闭按钮时</span>
+					<div class="settings-toggle-list">
+						<div class="settings-row settings-toggle-row">
+							<span class="settings-row-icon"><el-icon><Monitor /></el-icon></span>
+							<span class="settings-row-text">桌面挂件</span>
+							<el-switch v-model="widgetVisible" size="small" class="settings-row-control" />
+						</div>
+						<div class="settings-row settings-toggle-row">
+							<span class="settings-row-icon"><el-icon><Timer /></el-icon></span>
+							<span class="settings-row-text">开机自启</span>
+							<el-switch v-model="autostart" size="small" class="settings-row-control" />
+						</div>
+						<div class="settings-row settings-toggle-row">
+							<span class="settings-row-icon"><el-icon><DataLine /></el-icon></span>
+							<span class="settings-row-text">流量监控</span>
+							<el-switch v-model="trafficMonitorEnabled" size="small" aria-label="流量监控" class="settings-row-control" />
+						</div>
+					</div>
+					<div class="settings-row">
+						<span class="settings-row-label">关闭按钮</span>
 						<el-radio-group v-model="closeAction" class="settings-close-radios">
 							<el-radio value="tray">最小化到托盘</el-radio>
 							<el-radio value="exit">退出软件</el-radio>
 						</el-radio-group>
-					</div>
-					<div class="settings-toggle-grid">
-						<div class="settings-surface settings-toggle-card">
-							<div class="settings-item-icon"><el-icon><Monitor /></el-icon></div>
-							<div class="settings-item-copy"><strong>桌面挂件</strong></div>
-							<el-switch v-model="widgetVisible" size="small" />
-						</div>
-						<div class="settings-surface settings-toggle-card">
-							<div class="settings-item-icon"><el-icon><Timer /></el-icon></div>
-							<div class="settings-item-copy"><strong>开机自启</strong></div>
-							<el-switch v-model="autostart" size="small" />
-						</div>
-						<div class="settings-surface settings-toggle-card settings-traffic-card">
-							<div class="settings-item-icon"><el-icon><DataLine /></el-icon></div>
-							<div class="settings-item-copy"><strong>流量监控</strong></div>
-							<el-switch v-model="trafficMonitorEnabled" size="small" aria-label="流量监控" />
-						</div>
 					</div>
 				</section>
 
@@ -811,8 +795,8 @@ function openUpdateDialog() {
 					<div class="settings-section-heading">
 						<span class="settings-section-title">权限</span>
 					</div>
-					<div class="settings-permission-grid">
-						<div class="settings-surface settings-permission-card">
+					<div class="settings-permission-list">
+						<div class="settings-row settings-permission-row">
 							<div class="settings-permission-mark" :class="{ enabled: admin }">
 								<el-icon><Key /></el-icon>
 							</div>
@@ -829,14 +813,6 @@ function openUpdateDialog() {
 								:icon="Key"
 								@click="onRestartAsAdmin">启用</el-button>
 						</div>
-						<button
-							type="button"
-							class="settings-surface settings-shortcut-card"
-							:disabled="shortcutBusy"
-							@click="onCreateShortcut">
-							<span class="settings-item-icon"><el-icon><Link /></el-icon></span>
-							<span class="settings-shortcut-label">{{ shortcutBusy ? '创建中…' : '创建快捷方式' }}</span>
-						</button>
 					</div>
 				</section>
 			</div>

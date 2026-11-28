@@ -201,7 +201,7 @@ impl Drop for IfTable {
 }
 
 #[cfg(target_os = "windows")]
-fn read_interface(name: &str, if_index: Option<u32>) -> Result<MIB_IF_ROW2, String> {
+pub(crate) fn read_interface(name: &str, if_index: Option<u32>) -> Result<MIB_IF_ROW2, String> {
     let name_utf16: Vec<u16> = name.encode_utf16().collect();
     let matches_alias = |row: &MIB_IF_ROW2| {
         let end = row.Alias.iter().position(|unit| *unit == 0).unwrap_or(row.Alias.len());

@@ -8,7 +8,7 @@ import type {
   IpProfile,
   PendingAction,
   StaticInput,
-  ScanHostResult,
+  ScanBatch,
   ScanDoneResult,
   UpdateInfo,
   UpdateProgress,
@@ -49,14 +49,23 @@ export const runDiagnostic = (
 export const stopDiagnostic = (taskId: string) =>
   invoke<void>("stop_diagnostic", { taskId });
 
-export const runHostScan = (taskId: string, adapter: string, ip: string, mask: string) =>
-  invoke<void>("run_host_scan", { taskId, adapter, ip, mask });
+export const listScanSubnets = (adapter: string, ifIndex: number) =>
+  invoke<string[]>("list_scan_subnets", { adapter, ifIndex });
+
+export const runHostScan = (taskId: string, adapter: string, ifIndex: number, subnet: string | null, repeat: boolean) =>
+  invoke<void>("run_host_scan", { taskId, adapter, ifIndex, subnet, repeat });
 
 export const stopHostScan = (taskId: string) =>
   invoke<void>("stop_host_scan", { taskId });
 
-export const onScanHostResults = (cb: (p: ScanHostResult[]) => void) =>
-  getCurrentWindow().listen<ScanHostResult[]>("scan-host-results", (e) => cb(e.payload));
+export const onScanHostResults = (cb: (p: ScanBatch) => void) =>
+  getCurrentWindow().listen<ScanBatch>("scan-host-results", (e) => cb(e.payload));
+
+export const onScanRoundStarted = (cb: (p: { task_id: string; ips: string[] }) => void) =>
+  getCurrentWindow().listen<{ task_id: string; ips: string[] }>("scan-round-started", (e) => cb(e.payload));
+
+export const onScanWaiting = (cb: (id: string) => void) =>
+  getCurrentWindow().listen<string>("scan-waiting", (e) => cb(e.payload));
 
 export const onScanDone = (cb: (p: ScanDoneResult) => void) =>
   getCurrentWindow().listen<ScanDoneResult>("scan-done", (e) => cb(e.payload));
@@ -114,9 +123,6 @@ export const setAutostart = (enabled: boolean) =>
   invoke<void>("set_autostart", { enabled });
 
 export const getAutostart = () => invoke<boolean>("get_autostart");
-
-export const createDesktopShortcut = () =>
-  invoke<void>("create_desktop_shortcut");
 
 /// 挂件固定/穿透状态变化（托盘菜单或挂件图标触发）
 export function onWidgetPinChanged(cb: (pinned: boolean) => void): Promise<UnlistenFn> {
