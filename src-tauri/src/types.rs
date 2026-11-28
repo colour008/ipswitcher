@@ -18,6 +18,18 @@ pub struct AdapterInfo {
     pub subnet_mask: Vec<String>,
     pub gateway: Option<String>,
     pub dns: Vec<String>,
+    /// IPv6 地址列表（已去除 %区域编号）
+    #[serde(default)]
+    pub ipv6: Vec<String>,
+    /// 与 ipv6 一一对应的前缀长度（数字字符串，如 "64"）
+    #[serde(default)]
+    pub ipv6_prefix: Vec<String>,
+    /// IPv6 默认网关
+    #[serde(default)]
+    pub ipv6_gateway: Option<String>,
+    /// IPv6 DNS 服务器列表
+    #[serde(default)]
+    pub ipv6_dns: Vec<String>,
 }
 
 /// 保存的静态 IP 方案

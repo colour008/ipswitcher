@@ -85,19 +85,18 @@ npm run app:build
 
 ## 下载产物
 
-最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.3.5 产物如下：
+最新版本见 [Releases](https://github.com/colour008/ipswitcher/releases)，当前 v2.4.0 产物如下：
 
 | 产物 | 文件 | 说明 |
 | --- | --- | --- |
-| NSIS 安装包 | [IPSwitcher_2.3.5_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.3.5/IPSwitcher_2.3.5_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
-| 绿色便携版 | [IPSwitcher_v2.3.5_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.3.5/IPSwitcher_v2.3.5_portable.zip) | 解压即用，配置保存在程序同级目录 |
-| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.3.5/IPSwitcher.exe) | 单文件可执行程序 |
+| NSIS 安装包 | [IPSwitcher_2.4.0_x64-setup.exe](https://github.com/colour008/ipswitcher/releases/download/v2.4.0/IPSwitcher_2.4.0_x64-setup.exe) | x64 安装包，可选安装路径、创建桌面快捷方式 |
+| 绿色便携版 | [IPSwitcher_v2.4.0_portable.zip](https://github.com/colour008/ipswitcher/releases/download/v2.4.0/IPSwitcher_v2.4.0_portable.zip) | 解压即用，配置保存在程序同级目录 |
+| 免安装单文件 | [IPSwitcher.exe](https://github.com/colour008/ipswitcher/releases/download/v2.4.0/IPSwitcher.exe) | 单文件可执行程序 |
 
 ## 路线图
 
 **基础体验**
 
-- IPv4 / IPv6 分离显示
 - 配置备份与导入导出（JSON）
 - 常用 DNS 快捷切换
 

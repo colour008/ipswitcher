@@ -170,8 +170,10 @@ function closeSettings() {
 	closeSupportPopover();
 }
 
+const DEFAULT_SIDEBAR_WIDTH = 350;
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 520;
+const MIN_MAIN_WIDTH = 320;
 
 let themeApplyId = 0;
 type ThemeViewTransition = {
@@ -375,36 +377,88 @@ onMounted(async () => {
 	void silentCheckUpdate();
 });
 
-let dragging = false;
+const isResizingSidebar = ref(false);
+let resizeStartX = 0;
+let resizeStartWidth = 0;
+let resizeRafId: number | null = null;
+let pendingWidth: number | null = null;
 
-function onDragMove(e: PointerEvent) {
-	if (!dragging || !bodyRef.value) return;
-	const left = bodyRef.value.getBoundingClientRect().left;
-	const w = Math.round(
-		Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX - left - 5)),
-	);
-	sidebarWidth.value = w;
+function getEffectiveMaxWidth(): number {
+	const containerWidth = bodyRef.value?.clientWidth ?? window.innerWidth;
+	return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, containerWidth - MIN_MAIN_WIDTH));
 }
 
-function stopDrag() {
-	if (!dragging) return;
-	dragging = false;
-	window.removeEventListener('pointermove', onDragMove);
-	window.removeEventListener('pointerup', stopDrag);
-	appConfig.value.sidebar_width = sidebarWidth.value;
+function clampSidebarWidth(target: number): number {
+	return Math.round(Math.min(getEffectiveMaxWidth(), Math.max(MIN_WIDTH, target)));
+}
+
+function commitSidebarWidth() {
+	resizeRafId = null;
+	if (pendingWidth === null) return;
+	sidebarWidth.value = pendingWidth;
+	pendingWidth = null;
+}
+
+function onSidebarPointerMove(e: PointerEvent) {
+	if (!isResizingSidebar.value) return;
+	const deltaX = e.clientX - resizeStartX;
+	pendingWidth = clampSidebarWidth(resizeStartWidth + deltaX);
+	if (resizeRafId === null) {
+		resizeRafId = requestAnimationFrame(commitSidebarWidth);
+	}
+}
+
+function cleanupSidebarResizeListeners() {
+	window.removeEventListener('pointermove', onSidebarPointerMove);
+	window.removeEventListener('pointerup', stopSidebarResize);
+	window.removeEventListener('pointercancel', stopSidebarResize);
+	document.body.classList.remove('is-resizing-sidebar');
+}
+
+function stopSidebarResize() {
+	if (!isResizingSidebar.value) return;
+	isResizingSidebar.value = false;
+	cleanupSidebarResizeListeners();
+	if (resizeRafId !== null) {
+		cancelAnimationFrame(resizeRafId);
+		resizeRafId = null;
+	}
+	if (pendingWidth !== null) {
+		sidebarWidth.value = pendingWidth;
+		pendingWidth = null;
+	}
+	if (sidebarWidth.value !== resizeStartWidth) {
+		appConfig.value.sidebar_width = sidebarWidth.value;
+		void saveConfig(appConfig.value);
+	}
+}
+
+function startSidebarResize(e: PointerEvent) {
+	if (e.pointerType === 'mouse' && e.button !== 0) return;
+	e.preventDefault();
+	isResizingSidebar.value = true;
+	resizeStartX = e.clientX;
+	resizeStartWidth = sidebarWidth.value;
+	document.body.classList.add('is-resizing-sidebar');
+	window.addEventListener('pointermove', onSidebarPointerMove);
+	window.addEventListener('pointerup', stopSidebarResize);
+	window.addEventListener('pointercancel', stopSidebarResize);
+}
+
+function resetSidebarWidth() {
+	const next = clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+	if (sidebarWidth.value === next) return;
+	sidebarWidth.value = next;
+	appConfig.value.sidebar_width = next;
 	void saveConfig(appConfig.value);
 }
 
-function startDrag(e: PointerEvent) {
-	dragging = true;
-	e.preventDefault();
-	window.addEventListener('pointermove', onDragMove);
-	window.addEventListener('pointerup', stopDrag);
-}
-
 onUnmounted(() => {
-	window.removeEventListener('pointermove', onDragMove);
-	window.removeEventListener('pointerup', stopDrag);
+	cleanupSidebarResizeListeners();
+	if (resizeRafId !== null) {
+		cancelAnimationFrame(resizeRafId);
+		resizeRafId = null;
+	}
 	document.removeEventListener('pointerdown', onDocPointerDown);
 	document.removeEventListener('keydown', onDocKeydown);
 	document.removeEventListener('visibilitychange', onPageVisibilityChanged);
@@ -652,15 +706,20 @@ function openUpdateDialog() {
 		</header>
 
 		<div class="app-body" ref="bodyRef">
-			<aside class="sidebar" :style="{ width: sidebarWidth + 'px' }">
+			<aside
+				class="sidebar"
+				:class="{ 'is-resizing': isResizingSidebar }"
+				:style="{ width: sidebarWidth + 'px' }">
 				<AdapterList class="sidebar-adapter-list" @refresh="refreshAdapterList()" />
 				<TrafficMonitor v-if="savedTrafficMonitorEnabled" :active="monitoringActive" />
+				<div
+					class="sidebar-edge-handle"
+					role="separator"
+					aria-orientation="vertical"
+					title="拖动调整宽度，双击恢复默认"
+					@pointerdown="startSidebarResize"
+					@dblclick.stop="resetSidebarWidth" />
 			</aside>
-			<div
-				class="splitter"
-				role="separator"
-				aria-orientation="vertical"
-				@pointerdown="startDrag"></div>
 			<section class="main">
 				<el-tabs v-model="activeTab" class="main-tabs">
 					<el-tab-pane label="IP 配置" name="ip">
@@ -989,18 +1048,18 @@ function openUpdateDialog() {
 .app-body {
 	flex: 1;
 	display: flex;
-	gap: 0;
-	padding: 10px;
+	gap: 10px;
+	padding: 10px 10px 20px;
 	min-height: 0;
 }
 .sidebar {
+	position: relative;
 	flex-shrink: 0;
 	min-width: 0;
-	height: 100%;
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
-	overflow: hidden;
+	overflow: visible;
 	width: 100%;
 }
 .sidebar-adapter-list {
@@ -1009,34 +1068,19 @@ function openUpdateDialog() {
 	height: auto;
 	width: 100%;
 }
-.splitter {
-	width: 6px;
-	flex-shrink: 0;
-	cursor: col-resize;
-	transition: background 0.15s;
-	position: relative;
-}
-.splitter::after {
-	content: '';
+.sidebar-edge-handle {
 	position: absolute;
-	top: 1px;
-	bottom: 1px;
-	left: 50%;
-	width: 3px;
-	transform: translateX(-50%);
-}
-.splitter:hover,
-.splitter:active {
-	background: transparent;
-}
-.splitter:hover::after,
-.splitter:active::after {
-	background: var(--accent);
+	top: 0;
+	right: -7px;
+	width: 8px;
+	height: 100%;
+	cursor: ew-resize;
+	touch-action: none;
+	z-index: 5;
 }
 .main {
 	flex: 1;
 	min-width: 0;
-	margin-left: 4px;
 	display: flex;
 	flex-direction: column;
 }

@@ -295,9 +295,11 @@ function openNetworkPanel() {
 		<div class="list-body">
 			<div class="list-colhead">
 				<span class="col-main">网卡</span>
-				<span class="col-status">状态</span>
-				<span class="col-toggle">开关</span>
-				<span class="col-action">置顶</span>
+				<div class="col-side">
+					<span class="col-status">状态</span>
+					<span class="col-toggle">开关</span>
+					<span class="col-action">置顶</span>
+				</div>
 			</div>
 			<div
 				v-for="row in filtered"
@@ -345,54 +347,56 @@ function openNetworkPanel() {
 						</div>
 					</div>
 				</el-tooltip>
-				<div class="col-status">
-					<el-tag
-						v-if="row.status === 'connected'"
-						type="success"
-						size="small"
-						class="status-tag">
-						已连接
-					</el-tag>
-					<el-tag
-						v-else-if="row.status === 'disabled'"
-						type="info"
-						size="small"
-						class="status-tag">
-						已禁用
-					</el-tag>
-					<el-tag v-else type="danger" size="small" class="status-tag"
-						>未连接</el-tag
-					>
-				</div>
-				<div class="col-toggle">
-					<el-tooltip
-						:content="isDisabled(row) ? '启用网卡' : '禁用网卡'"
-						placement="top"
-						popper-class="app-tip">
-						<button
-							class="switch"
-							:class="{ 'is-on': !isDisabled(row) }"
-							:disabled="toggling === row.name"
-							@click.stop="toggleEnabled(row)">
-							<span class="switch-thumb"></span>
-						</button>
-					</el-tooltip>
-				</div>
-				<div class="col-action">
-					<el-tooltip
-						:content="isPinned(row.name) ? '取消置顶' : '置顶'"
-						placement="top"
-						popper-class="app-tip">
-						<button
-							class="pin-btn"
-							:class="{ 'is-on': isPinned(row.name) }"
-							@click.stop="togglePin(row)">
-							<svg viewBox="0 0 24 24" aria-hidden="true">
-								<path
-									d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z" />
-							</svg>
-						</button>
-					</el-tooltip>
+				<div class="col-side">
+					<div class="col-status">
+						<el-tag
+							v-if="row.status === 'connected'"
+							type="success"
+							size="small"
+							class="status-tag">
+							已连接
+						</el-tag>
+						<el-tag
+							v-else-if="row.status === 'disabled'"
+							type="info"
+							size="small"
+							class="status-tag">
+							已禁用
+						</el-tag>
+						<el-tag v-else type="danger" size="small" class="status-tag"
+							>未连接</el-tag
+						>
+					</div>
+					<div class="col-toggle">
+						<el-tooltip
+							:content="isDisabled(row) ? '启用网卡' : '禁用网卡'"
+							placement="top"
+							popper-class="app-tip">
+							<button
+								class="switch"
+								:class="{ 'is-on': !isDisabled(row) }"
+								:disabled="toggling === row.name"
+								@click.stop="toggleEnabled(row)">
+								<span class="switch-thumb"></span>
+							</button>
+						</el-tooltip>
+					</div>
+					<div class="col-action">
+						<el-tooltip
+							:content="isPinned(row.name) ? '取消置顶' : '置顶'"
+							placement="top"
+							popper-class="app-tip">
+							<button
+								class="pin-btn"
+								:class="{ 'is-on': isPinned(row.name) }"
+								@click.stop="togglePin(row)">
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path
+										d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z" />
+								</svg>
+							</button>
+						</el-tooltip>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -482,20 +486,26 @@ function openNetworkPanel() {
 	flex: 1;
 	min-width: 0;
 }
-.col-status {
-	width: 72px;
+.col-side {
 	flex: none;
 	display: flex;
-	justify-content: center;
+	align-items: center;
+	gap: 4px;
+}
+.col-status {
+	width: 52px;
+	flex: none;
+	display: flex;
+	justify-content: flex-start;
 }
 .col-toggle {
-	width: 30px;
+	width: 28px;
 	flex: none;
 	display: flex;
 	justify-content: center;
 }
 .col-action {
-	width: 40px;
+	width: 28px;
 	flex: none;
 	display: flex;
 	justify-content: flex-end;
@@ -525,10 +535,11 @@ function openNetworkPanel() {
 
 /* 信息区：名称一行、描述一行，纵向紧凑 */
 .adapter-main {
+	flex: 1;
+	min-width: 0;
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
-	min-width: 0;
 }
 .adapter-name {
 	font-weight: 600;
@@ -663,11 +674,11 @@ function openNetworkPanel() {
 
 <style>
 .adapter-tip.el-popper {
-	background: transparent !important;
-	background-color: transparent !important;
+	background: var(--panel-bg) !important;
+	background-color: var(--panel-bg) !important;
 	color: var(--text-primary) !important;
-	border: 0 !important;
-	box-shadow: none !important;
+	border: 1px solid var(--panel-border) !important;
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35) !important;
 	border-radius: 10px !important;
 	padding: 6px 8px !important;
 	max-width: min(280px, calc(100vw - 32px)) !important;

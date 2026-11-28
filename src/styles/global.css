@@ -724,9 +724,7 @@ html:not(.dark) :is(.settings-dialog .settings-close-radios, .form-col .mode-rad
 
 /* 全局提示仅保留文字，避免不同主题或桌面壁纸下出现突兀的提示底色 */
 .app-tip.el-popper,
-.app-tip.el-popper.is-dark,
-.adapter-tip.el-popper,
-.adapter-tip.el-popper.is-dark {
+.app-tip.el-popper.is-dark {
 	min-height: 0;
 	padding: 4px 8px;
 	border-radius: 6px;
@@ -735,6 +733,20 @@ html:not(.dark) :is(.settings-dialog .settings-close-radios, .form-col .mode-rad
 	color: var(--text-primary) !important;
 	border: 0 !important;
 	box-shadow: none !important;
+	font-size: 11px;
+	line-height: 1.25;
+}
+/* 网卡详情悬浮提示：不透明弹层底色，避免透出下方内容 */
+.adapter-tip.el-popper,
+.adapter-tip.el-popper.is-dark {
+	min-height: 0;
+	padding: 6px 8px;
+	border-radius: 10px;
+	background: var(--panel-bg) !important;
+	background-color: var(--panel-bg) !important;
+	color: var(--text-primary) !important;
+	border: 1px solid var(--panel-border) !important;
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35) !important;
 	font-size: 11px;
 	line-height: 1.25;
 }
@@ -815,4 +827,12 @@ html:not(.dark) :is(.settings-dialog .settings-close-radios, .form-col .mode-rad
 	height: 1px;
 	margin: 3px 4px;
 	background: var(--panel-border);
+}
+
+/* 侧栏拖拽中：全局锁定水平调整光标并禁止选字，避免划过文字误选、光标跳变 */
+body.is-resizing-sidebar,
+body.is-resizing-sidebar * {
+	cursor: ew-resize !important;
+	user-select: none !important;
+	-webkit-user-select: none !important;
 }

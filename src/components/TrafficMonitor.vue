@@ -298,7 +298,7 @@ onUnmounted(() => {
 	flex: none;
 	padding: 12px;
 	border-radius: var(--radius);
-	background: linear-gradient(145deg, var(--panel-glass), var(--panel-bg));
+	background: var(--panel-glass);
 }
 .traffic-header,
 .traffic-heading,

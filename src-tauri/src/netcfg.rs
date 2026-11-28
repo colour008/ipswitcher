@@ -58,10 +58,27 @@ const LIST_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $nics = Get-NetAdapter | Select-Object Name, InterfaceDescription, Status, AdminStatus, MacAddress, LinkSpeed, InterfaceGuid, ifIndex
 $wmi = @(Get-CimInstance Win32_NetworkAdapterConfiguration)
+$v6addrs = @(Get-NetIPAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceIndex -ne 0 })
+$v6routes = @(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -ErrorAction SilentlyContinue)
+$v6dns = @(Get-DnsClientServerAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue)
 $result = foreach ($n in $nics) {
   $w = $wmi | Where-Object { $_.InterfaceIndex -eq $n.ifIndex } | Select-Object -First 1
   $gw = $null
   if ($w -and $w.DefaultIPGateway) { $gw = @($w.DefaultIPGateway)[0] }
+
+  $v6 = @($v6addrs | Where-Object { $_.InterfaceIndex -eq $n.ifIndex })
+  $ipv6 = @()
+  $ipv6Prefix = @()
+  foreach ($a in $v6) {
+    $ip = ([string]$a.IPAddress) -replace '%\d+$', ''
+    $ipv6 += $ip
+    $ipv6Prefix += [string]$a.PrefixLength
+  }
+  $v6route = $v6routes | Where-Object { $_.InterfaceIndex -eq $n.ifIndex } | Select-Object -First 1
+  $ipv6gateway = if ($v6route) { [string]$v6route.NextHop } else { $null }
+  $v6dnsEntry = $v6dns | Where-Object { $_.InterfaceAlias -eq $n.Name } | Select-Object -First 1
+  $ipv6dns = @(if ($v6dnsEntry) { $v6dnsEntry.ServerAddresses | Where-Object { $_ } })
+
   [PSCustomObject]@{
     name = [string]$n.Name
     description = [string]$n.InterfaceDescription
@@ -72,9 +89,13 @@ $result = foreach ($n in $nics) {
     link_speed = if ($n.LinkSpeed) { [string]$n.LinkSpeed } else { $null }
     dhcp_enabled = if ($w) { [bool]$w.DHCPEnabled } else { $null }
     ipv4 = @($w.IPAddress | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })
-    subnet_mask = @($w.IPSubnet | Where-Object { $_ })
+    subnet_mask = @($w.IPSubnet | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })
     gateway = $gw
     dns = @($w.DNSServerSearchOrder | Where-Object { $_ })
+    ipv6 = $ipv6
+    ipv6_prefix = $ipv6Prefix
+    ipv6_gateway = $ipv6gateway
+    ipv6_dns = $ipv6dns
   }
 }
 $result = @($result | Group-Object if_index | ForEach-Object { $_.Group[0] })

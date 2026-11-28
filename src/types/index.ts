@@ -12,6 +12,10 @@ export interface AdapterInfo {
   subnet_mask: string[];
   gateway: string | null;
   dns: string[];
+  ipv6: string[];
+  ipv6_prefix: string[];
+  ipv6_gateway: string | null;
+  ipv6_dns: string[];
 }
 
 /** Network interface counters reported by Windows. */

@@ -38,6 +38,47 @@ const editForm = reactive({
 
 const adapter = computed(() => currentAdapter());
 
+/** 顶部信息表当前展示的协议族（IPv6 仅只读展示） */
+const ipFamily = ref<'ipv4' | 'ipv6'>('ipv4');
+
+const ipv6List = computed(() => adapter.value?.ipv6 ?? []);
+const ipv6Prefix = computed(() => adapter.value?.ipv6_prefix ?? []);
+const hasIpv6 = computed(() => ipv6List.value.length > 0);
+
+/** IPv6 视图链路状态：未获取到 IPv6 地址视为未连接 */
+const ipv6Status = computed(() => (hasIpv6.value ? 'connected' : 'disconnected'));
+
+const shownStatus = computed(() =>
+	ipFamily.value === 'ipv6' ? ipv6Status.value : adapter.value?.status,
+);
+
+const shownAddress = computed(() =>
+	ipFamily.value === 'ipv6'
+		? ipv6List.value.join('、')
+		: adapter.value?.ipv4.join('、') || '',
+);
+const shownPrefix = computed(() => {
+	if (ipFamily.value === 'ipv6') {
+		return ipv6Prefix.value.map((p) => `/${p}`).join('、');
+	}
+	return adapter.value?.subnet_mask.join('、') || '';
+});
+const shownGateway = computed(() =>
+	ipFamily.value === 'ipv6'
+		? adapter.value?.ipv6_gateway ?? ''
+		: adapter.value?.gateway ?? '',
+);
+const shownDns1 = computed(() =>
+	ipFamily.value === 'ipv6'
+		? adapter.value?.ipv6_dns[0] ?? ''
+		: adapter.value?.dns[0] ?? '',
+);
+const shownDns2 = computed(() =>
+	ipFamily.value === 'ipv6'
+		? adapter.value?.ipv6_dns[1] ?? ''
+		: adapter.value?.dns[1] ?? '',
+);
+
 const adapterKind = computed(() => {
 	const identity = `${adapter.value?.name ?? ''} ${adapter.value?.description ?? ''}`.toLowerCase();
 	if (/bluetooth|蓝牙|personal area network|\bpan\b/.test(identity)) {
@@ -392,10 +433,28 @@ async function saveProfile() {
 								<path d="m9.5 10-3-3m8 3 3-3m-8 7-3 3m8-3 3 3" />
 							</svg>
 						</span>
-						{{ adapter?.name || '未选择网卡' }}
-					</div>
-					<div class="current-desc muted">
-						{{ adapter?.description || '请在左侧选择一张网卡' }}
+						<span class="current-name">{{ adapter?.name || '未选择网卡' }}</span>
+						<span v-if="adapter?.description" class="current-sub" :title="adapter.description">（{{ adapter.description }}）</span>
+						<div class="family-switch" role="tablist" aria-label="协议族切换">
+							<span
+								class="family-thumb"
+								:class="{ 'is-right': ipFamily === 'ipv6' }"
+								aria-hidden="true"></span>
+							<button
+								type="button"
+								class="family-option"
+								:class="{ 'is-on': ipFamily === 'ipv4' }"
+								@click="ipFamily = 'ipv4'">
+								IPv4
+							</button>
+							<button
+								type="button"
+								class="family-option"
+								:class="{ 'is-on': ipFamily === 'ipv6' }"
+								@click="ipFamily = 'ipv6'">
+								IPv6
+							</button>
+						</div>
 					</div>
 				</div>
 				<el-tooltip
@@ -423,30 +482,30 @@ async function saveProfile() {
 				</el-descriptions-item>
 				<el-descriptions-item label="链路状态">
 					<el-tag
-						v-if="adapter?.status === 'connected'"
+						v-if="shownStatus === 'connected'"
 						type="success"
 						size="small"
 						>已连接</el-tag
 					>
 					<el-tag v-else type="danger" size="small">未连接</el-tag>
 				</el-descriptions-item>
-				<el-descriptions-item label="IPv4 地址">
-					{{ adapter?.ipv4.join('、') || '-' }}
+				<el-descriptions-item :label="ipFamily === 'ipv6' ? 'IPv6 地址' : 'IPv4 地址'">
+					{{ shownAddress || '-' }}
 				</el-descriptions-item>
-				<el-descriptions-item label="子网掩码">
-					{{ adapter?.subnet_mask.join('、') || '-' }}
+				<el-descriptions-item :label="ipFamily === 'ipv6' ? '前缀长度' : '子网掩码'">
+					{{ shownPrefix || '-' }}
 				</el-descriptions-item>
 				<el-descriptions-item label="默认网关">
-					{{ adapter?.gateway || '-' }}
+					{{ shownGateway || '-' }}
 				</el-descriptions-item>
 				<el-descriptions-item label="链路速率">
 					{{ adapter?.link_speed || '-' }}
 				</el-descriptions-item>
 				<el-descriptions-item label="首选 DNS">
-					{{ adapter?.dns[0] || '-' }}
+					{{ shownDns1 || '-' }}
 				</el-descriptions-item>
 				<el-descriptions-item label="备用 DNS">
-					{{ adapter?.dns[1] || '-' }}
+					{{ shownDns2 || '-' }}
 				</el-descriptions-item>
 				<el-descriptions-item label="MAC 地址" :span="2">
 					<span>{{ adapter?.mac || '-' }}</span>
@@ -458,57 +517,61 @@ async function saveProfile() {
 		<div class="target-grid">
 			<div class="panel form-col">
 				<div class="card-title">IP 配置</div>
-				<el-radio-group v-model="mode" class="mode-radio">
-					<el-radio value="dhcp">DHCP 自动获取</el-radio>
-					<el-radio value="static">固定 IP</el-radio>
-				</el-radio-group>
+				<div class="form-body">
+					<el-radio-group v-model="mode" class="mode-radio">
+						<el-radio value="dhcp">DHCP 自动获取</el-radio>
+						<el-radio value="static">固定 IP</el-radio>
+					</el-radio-group>
 
-				<el-form
-					v-if="mode === 'static'"
-					label-position="top"
-					class="target-form">
-					<div class="form-grid">
-						<el-form-item label="IP 地址">
+					<el-form
+						v-if="mode === 'static'"
+						label-position="top"
+						class="target-form">
+						<div class="form-grid">
+							<el-form-item label="IP 地址">
+								<el-input
+									v-model="form.ip"
+									placeholder="如 192.168.1.100" />
+							</el-form-item>
+							<el-form-item label="子网掩码">
+								<el-input
+									v-model="form.mask"
+									placeholder="如 255.255.255.0" />
+							</el-form-item>
+							<el-form-item label="默认网关（可选）">
+								<el-input
+									v-model="form.gateway"
+									placeholder="如 192.168.1.1" />
+							</el-form-item>
+							<el-form-item label="首选 DNS（可选）">
+								<el-input
+									v-model="form.dns1"
+									placeholder="如 223.5.5.5" />
+							</el-form-item>
+							<el-form-item label="备用 DNS（可选）">
+								<el-input
+									v-model="form.dns2"
+									placeholder="如 119.29.29.29" />
+							</el-form-item>
+						</div>
+					</el-form>
+
+					<div class="dns-only">
+						<div class="dns-section">
+							<span class="dns-section-title">仅修改 DNS</span>
+						</div>
+						<div class="dns-row">
 							<el-input
-								v-model="form.ip"
-								placeholder="如 192.168.1.100" />
-						</el-form-item>
-						<el-form-item label="子网掩码">
+								v-model="dnsOnly.dns1"
+								placeholder="首选 DNS"
+								class="dns-input" />
 							<el-input
-								v-model="form.mask"
-								placeholder="如 255.255.255.0" />
-						</el-form-item>
-						<el-form-item label="默认网关（可选）">
-							<el-input
-								v-model="form.gateway"
-								placeholder="如 192.168.1.1" />
-						</el-form-item>
-						<el-form-item label="首选 DNS（可选）">
-							<el-input
-								v-model="form.dns1"
-								placeholder="如 223.5.5.5" />
-						</el-form-item>
-						<el-form-item label="备用 DNS（可选）">
-							<el-input
-								v-model="form.dns2"
-								placeholder="如 119.29.29.29" />
-						</el-form-item>
+								v-model="dnsOnly.dns2"
+								placeholder="备用 DNS（可选）"
+								class="dns-input" />
+							<el-button @click="applyDnsOnly">应用 DNS</el-button>
+						</div>
 					</div>
-				</el-form>
-
-				<div class="dns-section">
-					<span class="dns-section-title">仅修改 DNS</span>
-				</div>
-				<div class="dns-row">
-					<el-input
-						v-model="dnsOnly.dns1"
-						placeholder="首选 DNS"
-						class="dns-input" />
-					<el-input
-						v-model="dnsOnly.dns2"
-						placeholder="备用 DNS（可选）"
-						class="dns-input" />
-					<el-button @click="applyDnsOnly">应用 DNS</el-button>
 				</div>
 
 				<div class="actions">
@@ -650,11 +713,11 @@ async function saveProfile() {
 .current-card,
 .form-col,
 .profile-col {
-	padding: 12px;
+	padding: 10px;
 }
 .current-card {
 	overflow: hidden;
-	background: linear-gradient(145deg, var(--panel-glass), var(--panel-bg));
+	background: var(--panel-glass);
 }
 .desc-frame {
 	border: 1px solid var(--description-border);
@@ -668,7 +731,7 @@ async function saveProfile() {
 .card-title {
 	font-size: 14px;
 	font-weight: 600;
-	margin-bottom: 8px;
+	margin-bottom: 6px;
 	letter-spacing: 0.015em;
 }
 .current-head {
@@ -729,9 +792,77 @@ async function saveProfile() {
 .current-kind-icon.is-disconnected {
 	opacity: 0.55;
 }
-.current-desc {
+.current-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.current-sub {
+	flex: 0 1 auto;
+	max-width: 62%;
+	min-width: 0;
 	font-size: 12px;
-	margin-top: 2px;
+	font-weight: 400;
+	color: var(--text-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.family-switch {
+	flex: none;
+	position: relative;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	align-items: center;
+	gap: 2px;
+	margin-left: 2px;
+	padding: 2px;
+	background: var(--app-bg);
+	border: 1px solid var(--panel-border);
+	border-radius: 999px;
+}
+.family-thumb {
+	position: absolute;
+	top: 2px;
+	bottom: 2px;
+	left: 2px;
+	width: calc((100% - 6px) / 2);
+	border-radius: 999px;
+	background: var(--accent);
+	box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 38%, transparent);
+	transition: transform 0.3s cubic-bezier(0.34, 0.8, 0.4, 1);
+}
+.family-thumb.is-right {
+	transform: translateX(calc(100% + 2px));
+}
+.family-option {
+	position: relative;
+	z-index: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 24px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--text-secondary);
+	font-size: 11px;
+	font-weight: 550;
+	line-height: 1;
+	cursor: pointer;
+	transition: color 0.28s ease;
+}
+.family-option:hover:not(.is-on) {
+	color: var(--text-primary);
+}
+.family-option.is-on {
+	color: #fff;
+}
+.family-option:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
 }
 .copy-btn {
 	flex: none;
@@ -766,7 +897,7 @@ async function saveProfile() {
 	background: var(--app-bg) !important;
 	color: var(--text-secondary);
 	font-size: 11px;
-	font-weight: 550;
+	font-weight: 500;
 }
 .desc :deep(.el-descriptions__table) {
 	width: 100%;
@@ -799,7 +930,9 @@ async function saveProfile() {
 .target-grid {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) 350px;
+	grid-template-rows: minmax(0, 1fr);
 	gap: 10px;
+	align-items: stretch;
 	flex: 1;
 	min-height: 0;
 }
@@ -808,26 +941,39 @@ async function saveProfile() {
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
-	height: 100%;
+}
+.form-body {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
 	overflow-y: auto;
+	gap: 8px;
+}
+.form-body > * {
+	flex-shrink: 0;
 }
 .form-col > .card-title {
 	padding-bottom: 8px;
 	border-bottom: 1px solid var(--panel-border);
 }
-.mode-radio {
-	margin-bottom: 8px;
+.target-form {
+	display: grid;
+	flex: 1 0 auto;
+	max-height: 180px;
 }
 .form-grid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 0 12px;
+	gap: 2px 10px;
 }
 .target-form :deep(.el-form-item) {
-	margin-bottom: 8px;
+	margin-bottom: 0;
 }
-.target-form :deep(.el-form-item__label) {
-	padding-bottom: 2px;
+.target-form :deep(.el-form-item--label-top > .el-form-item__label) {
+	display: block;
+	margin-bottom: 3px !important;
+  margin-left: 3px !important;
 	font-size: 12px;
 }
 .target-form :deep(.el-input__wrapper),
@@ -852,7 +998,7 @@ async function saveProfile() {
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	margin: 8px 0;
+	margin-bottom: 6px;
 }
 .dns-section-title {
 	flex: none;
@@ -870,19 +1016,26 @@ async function saveProfile() {
 	display: flex;
 	gap: 8px;
 	align-items: center;
-	padding: 4px 0;
 }
 .dns-input {
 	flex: 1;
 }
 .dns-input :deep(.el-input__wrapper) {
-	min-height: 36px;
+	min-height: 32px;
 }
 .actions {
 	display: flex;
+	flex: none;
 	align-items: center;
 	gap: 8px;
-	margin-top: 8px;
+	margin-bottom: 8px;
+	padding-top: 18px;
+	border-top: 1px solid var(--panel-border);
+}
+/* 次按钮去掉浅色实底，保持透明（主按钮保留实色） */
+.dns-row :deep(.el-button),
+.actions :deep(.el-button:not(.el-button--primary)) {
+	background: transparent;
 }
 
 .profile-col {
@@ -890,14 +1043,13 @@ async function saveProfile() {
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
-	height: 100%;
 }
 .profile-header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	margin-bottom: 10px;
-	padding-bottom: 8px;
+	margin-bottom: 8px;
+	padding-bottom: 6px;
 	border-bottom: 1px solid var(--panel-border);
 }
 .profile-header .card-title {
@@ -1068,8 +1220,19 @@ async function saveProfile() {
 }
 
 @media (max-width: 1000px) {
+	.detail-wrap {
+		overflow-y: auto;
+	}
+	.current-card {
+		flex: none;
+	}
 	.target-grid {
 		grid-template-columns: 1fr;
+		grid-template-rows: auto auto;
+		flex: none;
+	}
+	.form-body, .profile-list {
+		flex: none;
 	}
 }
 </style>
